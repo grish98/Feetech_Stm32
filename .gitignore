@@ -1,0 +1,57 @@
+
+# Windows 11 System Junk
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+#  Build & Output Directories
+build/
+build_*/
+Debug/
+Release/
+bin/
+obj/
+
+
+# CMake & Ninja Artifacts
+
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.ninja
+*.cmake
+compile_commands.json
+
+
+#  VS Code & STM32 Extension
+
+.vscode/
+
+# STM32 Extension Local Stores
+ide.store.json
+bundles.store.json
+bundles-lock.store.json
+
+# Extension cache/history
+.history/
+*.code-workspace
+
+
+#  Compiler & Linker Outputs
+*.o
+*.obj
+*.d
+*.su       
+*.map      
+*.lst      
+*.elf      
+*.bin
+*.hex
+*.srec
+
+# STM32CubeMX Specifics
+mx.scratch
+*.ioc.bak
