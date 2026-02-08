@@ -55,3 +55,4 @@ bundles-lock.store.json
 # STM32CubeMX Specifics
 mx.scratch
 *.ioc.bak
+.clangd
