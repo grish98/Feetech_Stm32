@@ -21,6 +21,5 @@ int main(void) {
     RUN_TEST(test_Checksum_Too_Short);
     RUN_TEST(test_Checksum_Ignores_Headers_And_Final_Byte);
  
-    
     return UNITY_END();
 }

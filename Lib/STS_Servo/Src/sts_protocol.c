@@ -1,9 +1,9 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "sts_protocol.h"
 
 #define STS_HEADER_SIZE 2
 #define STS_CHECKSUM_SIZE 1
-#define STS_MIN_PACKET_SIZE 6
 
 uint8_t sts_calculate_checksum(const uint8_t* data, uint8_t length) {
     if (data == NULL || length < STS_MIN_PACKET_SIZE) {
