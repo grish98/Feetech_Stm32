@@ -4,7 +4,7 @@
 
 
 #define STS_MIN_PACKET_SIZE  6   
-#define STS_MAX_PACKET_SIZE 256
+#define STS_MAX_PACKET_SIZE 255
 
 
 /**
@@ -28,6 +28,18 @@ typedef enum {
  * @param length Total packet length (including headers and checksum slot).
  * @return uint8_t The calculated checksum, or 0 if inputs are invalid.
  */
-uint8_t sts_calculate_checksum(const uint8_t* data, uint8_t length);
+uint8_t sts_calculate_checksum(const uint8_t* data, uint16_t length);
 
+
+/**
+ * @brief Constructs an STS packet in the provided buffer.
+ * * @param id          Servo ID (0-253).
+ * @param instruction STS Instruction (e.g., 0x01 for Ping).
+ * @param parameters  Pointer to parameter bytes (can be NULL if p_len is 0).
+ * @param p_len       Number of parameters.
+ * @param buffer      The output buffer to store the packet.
+ * @param buf_size    The capacity of the output buffer.
+ * @return sts_result_t STS_OK or error code.
+ */
+sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* parameters, uint16_t p_len, uint8_t* buffer, uint16_t buf_size);
 
