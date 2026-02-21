@@ -20,12 +20,22 @@ extern void test_CreatePacket_ParamLimitOverflow(void);
 extern void test_CreatePacket_InvalidIDRange(void);
 extern void test_Checksum_SumExactly256(void);
 
+extern void test_ParseResponse_HardwareError(void);
+extern void test_ParseResponse_IDMismatch(void) ;
+extern void test_ParseResponse_ChecksumError(void);
+extern void test_ParseResponse_ValidPosition(void);
+extern void test_ParseResponse_MinimumLength(void);
+extern void test_ParseResponse_LengthMismatch(void);
+extern void test_ParseResponse_NullGuards(void);
+extern void test_ParseResponse_OverloadError(void);
+
 extern void setUp(void);
 extern void tearDown(void);
 
 int main(void) {
     UNITY_BEGIN();
-    
+
+    printf("\n--- STS Checksum Tests ---\n");
     RUN_TEST(test_Checksum_Ping);
     RUN_TEST(test_Checksum_Maximum_Sum);
     RUN_TEST(test_Checksum_Min_Length_Alternative_ID);
@@ -33,7 +43,8 @@ int main(void) {
     RUN_TEST(test_Checksum_Too_Short);
     RUN_TEST(test_Checksum_Ignores_Headers_And_Final_Byte);
     RUN_TEST(test_Checksum_SumExactly256);
-    
+
+    printf("\n--- STS Creation Tests ---\n");
     RUN_TEST(test_CreatePacket_Ping_Success);
     RUN_TEST(test_CreatePacket_BufferTooSmall);
     RUN_TEST(test_CreatePacket_NullBuffer);
@@ -45,6 +56,18 @@ int main(void) {
     RUN_TEST(test_CreatePacket_NullParamsWithNonZeroLength);
     RUN_TEST(test_CreatePacket_ParamLimitOverflow);
     RUN_TEST(test_CreatePacket_InvalidIDRange);
+
+    printf("\n--- STS Parser Tests ---\n");
+    RUN_TEST(test_ParseResponse_ValidPosition);
+    RUN_TEST(test_ParseResponse_HardwareError);
+    RUN_TEST(test_ParseResponse_IDMismatch);
+    RUN_TEST(test_ParseResponse_ChecksumError);
+    RUN_TEST(test_ParseResponse_MinimumLength);
+    RUN_TEST(test_ParseResponse_LengthMismatch);
+    RUN_TEST(test_ParseResponse_NullGuards);
+    RUN_TEST(test_ParseResponse_OverloadError);
+
+
     
     return UNITY_END();
 }
