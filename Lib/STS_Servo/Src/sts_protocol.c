@@ -1,26 +1,37 @@
+/**
+ ******************************************************************************
+ * @file           : sts_protocol.c
+ * @brief          : Feetech STS Servo Protocol Implementation
+ * @author         : Grisham Balloo
+ * @date           : 2026-02-22
+ * @version        : 1.0.0
+ ******************************************************************************
+ * @details
+ * This module implements the core logic for encoding and decoding Feetech STS
+ * series servo packets.
+ *
+ * Key Features:
+ * 1. Checksum Calculation: Implements the 8-bit NOT-sum logic required by 
+ * the Feetech hardware specification.
+ * 2. Packet Creation: Encodes instructions and parameters into valid, 
+ * ready-to-transmit binary packets.
+ * 3. Response Parsing: Synchronizes and extracts valid servo data from a 
+ * raw byte stream, filtered for errors and noise.
+ *
+* Design Philosophy:
+ * - Zero dynamic memory allocation (Safe for deterministic real-time control).
+ * - Stateless execution (Allows multiple servos to be parsed independently).
+ * - Self-healing logic (Automatically recovers from bus collisions or noise).
+ *
+ * @attention
+ * Copyright (c) 2026 Grisham Balloo. All rights reserved.
+ ******************************************************************************
+ */
+
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 #include "sts_protocol.h"
-
-/* Packet Layout Indices */
-#define STS_IDX_HEADER_1     0
-#define STS_IDX_HEADER_2     1
-#define STS_IDX_ID           2
-#define STS_IDX_LENGTH       3
-#define STS_IDX_INSTRUCTION  4  
-#define STS_IDX_STATUS       4  
-#define STS_IDX_PARAM_START  5
-
-#define STS_HEADER_SIZE 2
-#define STS_CHECKSUM_SIZE 1
-#define STS_LENGTH_FIXED_OVERHEAD  2
-#define STS_PKT_FIXED_TOTAL  4
-
-#define STS_MAX_ID 254
-#define STS_MAX_PARAM_LEN 253
-#define STS_Header 0xFF
-
 
 uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len) {
     if (pkt_buf == NULL || pkt_len < STS_MIN_PACKET_SIZE) {
@@ -49,8 +60,8 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
   if (pkt_buf_size < total_packet_size){
       return STS_ERR_INVALID_LEN;
   }
-    pkt_buf[STS_IDX_HEADER_1] = STS_Header;
-    pkt_buf[STS_IDX_HEADER_2] = STS_Header;
+    pkt_buf[STS_IDX_HEADER_1] = STS_HEADER;
+    pkt_buf[STS_IDX_HEADER_2] = STS_HEADER;
     pkt_buf[STS_IDX_ID]          = id;
     pkt_buf[STS_IDX_LENGTH]      = param_len + STS_LENGTH_FIXED_OVERHEAD;
     pkt_buf[STS_IDX_INSTRUCTION] = instruction;
@@ -60,12 +71,12 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
     }
 
     pkt_buf[total_packet_size - STS_CHECKSUM_SIZE] = sts_calculate_checksum(pkt_buf, total_packet_size);
+
     return STS_OK;
-  
 }
 
 /**
- * @brief Performs  validation of a potential STS packet.
+ * @brief Performs  validation of STS packet.
  * * Checks for  headers, verifies the target ID, ensures the buffer length 
  * matches the protocol's length field, and validates the checksum. 
  * Inspects the status byte for  hardware errors.
@@ -76,7 +87,7 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
  * @return sts_result_t STS_OK or specific error code.
  */
 static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len) {
-    if (rx_buf[STS_IDX_HEADER_1] != STS_Header || rx_buf[STS_IDX_HEADER_2] != STS_Header) {
+    if (rx_buf[STS_IDX_HEADER_1] != STS_HEADER || rx_buf[STS_IDX_HEADER_2] != STS_HEADER) {
       return STS_ERR_HEADER;
     }
     if (rx_buf[STS_IDX_ID] != expected_id)
@@ -93,7 +104,7 @@ static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_b
       return STS_ERR_CHECKSUM;
     }
 
-    if (rx_buf[STS_IDX_STATUS] != 0x00) 
+    if (rx_buf[STS_IDX_INSTRUCTION] != STS_HARDWARE_OK) 
     {
       return STS_ERR_HARDWARE;
     }
@@ -119,7 +130,7 @@ static const uint8_t* sts_find_packet_start(const uint8_t* buf, uint16_t len) {
     }
 
     for (uint16_t i = 0; i <= (len - STS_MIN_PACKET_SIZE); i++) {
-        if (buf[i] == STS_Header && buf[i+1] == STS_Header) {
+        if (buf[i] == STS_HEADER && buf[i+1] == STS_HEADER) {
             return &buf[i];
         }
     }

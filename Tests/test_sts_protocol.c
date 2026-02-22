@@ -1,3 +1,33 @@
+/**
+ ******************************************************************************
+ * @file           : test_sts_protocol.c
+ * @brief          : Unit Tests for STS Protocol Layer
+ * @author         : Grisham Balloo
+ * @date           : 2026-02-22
+ * @version        : 1.0.0
+ ******************************************************************************
+ * @details
+ * This test suite provides  verification for the Feetech STS
+ * Servo Protocol implementation. It utilises the Unity Test Framework to
+ * validate the following functional areas:
+ *
+ * 1. Checksum Logic (7 tests): Mathematical verification of the  8-bit NOT-sum 
+ * algorithm, handling of maximum sums, and null-pointer safety.
+ * 2. Packet Serialisation (11 tests): Validation of command construction,
+ * broadcast ID handling, and buffer boundary constraints.
+ * 3. Parser Robustness (8 tests): Verification of error rejection for 
+ * ID mismatches, hardware faults, and malformed length fields.
+ * 4. Synchronication and Integration (4 tests):Stress-testing the 
+ * sliding-window seeker against leading noise and false-header triggers 
+ * to ensure recovery in real-world serial bus environments.
+ *
+ *
+ * @see Lib/STS_Servo/Inc/sts_protocol.h for the target API documentation.
+ *
+ * @attention
+ * Copyright (c) 2026 Grisham Balloo. All rights reserved.
+ ******************************************************************************
+ */
 #include "unity.h"
 #include "sts_protocol.h"
 #include <stdint.h>
@@ -363,7 +393,7 @@ void test_ParseResponse_JunkData(void) {
 }
 
 /* =========================================================================
-   PROTOCOL INTERGRATION TESTS
+     PROTOCOL SYNCHRONIZATION & INTEGRATION TESTS
    ========================================================================= */
 
 void test_Protocol_Integration_Loopback(void) {

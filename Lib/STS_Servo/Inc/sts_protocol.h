@@ -1,10 +1,49 @@
+/**
+ ******************************************************************************
+ * @file           : sts_protocol.h
+ * @brief          : Feetech STS Servo Protocol API
+ * @author         : Grisham Balloo
+ * @date           : 2026-02-22
+ * @version        : 1.0.0
+ ******************************************************************************
+ * @details
+ * This module defines the public interface for the Feetech STS Servo Protocol.
+ * It implements a binary sliding-window packet parser and serialiser designed 
+ * for robust half-duplex UART communication.
+ * * Protocol Specifications:
+ * - Sync Headers : 0xFF 0xFF
+ * - Addressing   : 0-253 , 254 (Broadcast)
+ * - Integrity    : 8-bit truncated sum-check 
+ * - Payload      : 0-253 bytes variable parameters
+ * * @attention
+ * Copyright (c) 2026 Grisham Balloo. All rights reserved.
+ ******************************************************************************
+ */
 #pragma once
 
 #include <stdint.h>
 
+/* --- Protocol Structural Constants --- */
+#define STS_HEADER                0xFF
+#define STS_HEADER_SIZE           2
+#define STS_CHECKSUM_SIZE         1
+#define STS_LENGTH_FIXED_OVERHEAD 2    /* ID + Checksum  */
+#define STS_PKT_FIXED_TOTAL       4    /* Header(2) + ID(1) + Length(1) */
+#define STS_MIN_PACKET_SIZE       6    /* Header(2)+ID(1)+Len(1)+Inst(1)+CS(1) */
+#define STS_MAX_PACKET_SIZE       255 /* Max total size including headers and checksum */
 
-#define STS_MIN_PACKET_SIZE  6   
-#define STS_MAX_PACKET_SIZE 255
+/* --- Packet Layout Indices --- */
+#define STS_IDX_HEADER_1          0
+#define STS_IDX_HEADER_2          1
+#define STS_IDX_ID                2
+#define STS_IDX_LENGTH            3
+#define STS_IDX_INSTRUCTION       4    /* Also used as Status byte in responses */
+#define STS_IDX_PARAM_START       5
+
+/* --- Protocol Limits --- */
+#define STS_MAX_ID                254
+#define STS_MAX_PARAM_LEN         253
+#define STS_HARDWARE_OK           0x00
 
 
 /**
