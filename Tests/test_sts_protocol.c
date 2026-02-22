@@ -283,6 +283,7 @@ void test_ParseResponse_HeaderError_FirstByte(void) {
 }
 
 void test_ParseResponse_HeaderError_SecondByte(void) {
+    // First header byte is correct, but second is 0x00 instead of 0xFF
     uint8_t rx[] = {0xFF, 0x00, 0x01, 0x02, 0x00, 0xFC}; // 0x00 instead of 0xFF
     uint8_t out_data[10];
     uint16_t out_len;
@@ -291,7 +292,7 @@ void test_ParseResponse_HeaderError_SecondByte(void) {
 }
 
 void test_ParseResponse_IncompletePacket(void) {
-    // Claims Len 04 (8 bytes total), but we only provide 7
+    // Len byte claims 4, but we only provide 7 bytes total (should be 8 for a valid packet)
     uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x04, 0x00, 0x0A, 0x05, 0xEB}; 
     uint8_t out_data[10];
     uint16_t out_len;
@@ -302,6 +303,7 @@ void test_ParseResponse_IncompletePacket(void) {
 }
 
 void test_ParseResponse_MaxPayload(void) {
+    // This test creates a response with the maximum allowed parameter length (253 bytes) and checks that it is parsed correctly.
     uint8_t rx[259]; // Max size
     rx[0] = 0xFF; rx[1] = 0xFF; rx[2] = 0x01;
     rx[3] = 255;  // protocol_len
@@ -319,6 +321,7 @@ void test_ParseResponse_MaxPayload(void) {
 }
 
 void test_ParseResponse_BoundaryIDs(void) {
+    // This test checks that we can correctly parse responses from the lowest valid ID (0x00) and the broadcast ID (0xFE).
     uint8_t param_buf[10];
     uint16_t param_len;
     
@@ -332,6 +335,7 @@ void test_ParseResponse_BoundaryIDs(void) {
 }
 
 void test_ParseResponse_OutputBufferSafety(void) {
+    // This test ensures that if the parameter buffer is too small, we get an error and don't write out of bounds.
     // Packet: Headers(2), ID(1), Len(12), Status(1), Data(10), Checksum(1) = 16 bytes total
     // protocol_len (rx[3]) is 12 (Status + 10 Data + Checksum)
     uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x0C, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0x00};
@@ -348,6 +352,7 @@ void test_ParseResponse_OutputBufferSafety(void) {
 }
 
 void test_ParseResponse_JunkData(void) {
+    // Test with a buffer of all zeros and all 0xFFs to ensure we don't accidentally parse junk as valid packets.
     uint8_t all_zeros[10] = {0};
     uint8_t all_ones[10] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     uint8_t param_buf[10];
@@ -355,4 +360,81 @@ void test_ParseResponse_JunkData(void) {
 
     TEST_ASSERT_NOT_EQUAL(STS_OK, sts_parse_response(0x01, all_zeros, 10, param_buf,sizeof(param_buf), &param_len));
     TEST_ASSERT_NOT_EQUAL(STS_OK, sts_parse_response(0x01, all_ones, 10, param_buf,sizeof(param_buf), &param_len));
+}
+
+/* =========================================================================
+   PROTOCOL INTERGRATION TESTS
+   ========================================================================= */
+
+void test_Protocol_Integration_Loopback(void) {
+    // This test simulates a full loopback scenario where we create a packet and then immediately parse it. 
+    // This validates that the create and parse functions are consistent with each other.
+    uint8_t pkt_buf[16];          // Buffer for the created packet
+    uint8_t rx_param_buf[8];      // Buffer to hold extracted parameters
+    uint16_t rx_param_len = 0;
+    
+    uint8_t id = 0x01;
+    uint8_t status_ok = 0x00;
+    uint8_t original_params[] = {0xAA, 0xBB}; 
+    uint16_t original_len = sizeof(original_params);
+
+    //  simulate a response, so instruction is actually the status byte.
+    sts_result_t create_res = sts_create_packet(id, status_ok, original_params, original_len, pkt_buf, sizeof(pkt_buf));
+    
+    // The total length is STS_MIN_PACKET_SIZE (4) + parameter length (2) = 6
+    uint16_t total_len = STS_MIN_PACKET_SIZE + original_len;
+    sts_result_t parse_res = sts_parse_response(id, pkt_buf, total_len, rx_param_buf, sizeof(rx_param_buf), &rx_param_len);
+  
+    TEST_ASSERT_EQUAL(STS_OK, create_res);
+    TEST_ASSERT_EQUAL(STS_OK, parse_res);
+    TEST_ASSERT_EQUAL(original_len, rx_param_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(original_params, rx_param_buf, original_len);
+}
+
+void test_Protocol_Integration_MultiByteRead(void) {
+    // This test simulates a read operation where the servo returns multiple bytes of data. 
+    // We create a packet with a known payload, then parse it and verify that we correctly extract the parameters.
+    uint8_t pkt_buf[32];
+    uint8_t rx_data[10];
+    uint16_t rx_len = 0;
+    uint8_t sensor_data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
+    uint16_t sensor_data_len = sizeof(sensor_data);
+
+    sts_create_packet(10, 0x00, sensor_data, sensor_data_len, pkt_buf, sizeof(pkt_buf));
+
+    uint16_t total_pkt_len = 6 + sensor_data_len; 
+
+    sts_result_t res = sts_parse_response(10, pkt_buf, total_pkt_len, rx_data, sizeof(rx_data), &rx_len);
+
+    TEST_ASSERT_EQUAL_HEX8(STS_OK, res); 
+    TEST_ASSERT_EQUAL(sensor_data_len, rx_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(sensor_data, rx_data, sensor_data_len);
+}
+
+void test_Protocol_Integration_Robustness_Seeker(void) {
+    // This test simulates a noisy UART buffer where the valid packet is preceded by random bytes. The seeker should skip the noise and correctly parse the valid packet.
+    uint8_t noisy_buffer[] = {0x00, 0xAA, 0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC};
+    uint8_t out_buf[2];
+    uint16_t out_len;
+   
+    sts_result_t res = sts_parse_response(1, noisy_buffer, 8, out_buf, sizeof(out_buf), &out_len);
+
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(STS_OK, res, "Seeker failed to find packet in noisy buffer");
+    TEST_ASSERT_EQUAL(0, out_len); 
+}
+
+void test_Protocol_Integration_FalseHeaderRecovery(void) {
+    // This test simulates a scenario where there is a false header (0xFF 0xFF) in the noise before the actual valid packet. 
+    // The seeker should skip the false header and correctly parse the real packet.
+  
+    uint8_t tricky_buffer[] = { 
+        0x00, 0xFF, 0xFF, 0x01, 0xFF, // Junk with a fake header
+        0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC // The real valid packet
+    };
+    uint8_t out_buf[2];
+    uint16_t out_len;
+
+    sts_result_t res = sts_parse_response(1, tricky_buffer, sizeof(tricky_buffer), out_buf, sizeof(out_buf), &out_len);
+
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(STS_OK, res, "Seeker failed to recover from a false header");
 }

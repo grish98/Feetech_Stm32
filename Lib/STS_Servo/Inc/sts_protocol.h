@@ -27,7 +27,7 @@ typedef enum {
 
 /**
  * @brief Calculates the Feetech STS Checksum.
- * * Sums ID, Length, Instruction, and Parameters, then returns the 
+ * * Sums ID, Length, Instruction, and Parameters (skipping the initial 0xFF 0xFF headers), then returns the 
  * bitwise NOT of the 8-bit truncation.
  * * @param pkt_buf   Pointer to the start of the packet buffer.
  * @param pkt_len   Total packet length (including headers and checksum slot).
@@ -37,8 +37,9 @@ uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len);
 
 /**
  * @brief Constructs an STS packet in the provided buffer.
- * * @param id          Servo ID (0-253, 254 for broadcast).
- * @param instruction STS Instruction (e.g., 0x01 for Ping).
+ *
+ * @param id          Servo ID (0-253, 254 for broadcast).
+ * @param instruction STS Instruction (e.g., 0x01 for Ping) or Status code.
  * @param param_buf   Pointer to parameter bytes (can be NULL if param_len is 0).
  * @param param_len   Number of parameters.
  * @param pkt_buf     The output buffer to store the packet.
@@ -48,14 +49,17 @@ uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len);
 sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* param_buf, uint16_t param_len, uint8_t* pkt_buf, uint16_t pkt_buf_size);
 
 /**
- * @brief Parses a response packet from a servo.
- * * @param expected_id  The ID we are expecting a response from.
- * @param rx_buf       The raw data received from the UART.
- * @param rx_len       The length of data in rx_buf.
- * @param param_buf    Pointer to buffer where extracted parameters will be stored.
+ * @brief Parses a response packet from a servo, searching for valid headers in the buffer.
+ *
+ * This function  will skip invalid data until a valid packet for the expected ID is found or the buffer is exhausted.
+ *
+ * @param expected_id  The ID we are expecting a response from.
+ * @param rx_buf         The raw data received from the UART.
+ * @param rx_len         The length of data in rx_buf.
+ * @param param_buf      [Out] Buffer to store extracted parameters.
  * @param param_buf_size The capacity of the param_buf buffer.
- * @param param_len    Pointer to store the length of extracted data.
- * @return sts_result_t STS_OK on success, or hardware/protocol error code.
+ * @param param_len      [Out] Number of bytes actually extracted.
+ * @return sts_result_t STS_OK on success, or relevant error code.
  */
 sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len,  uint8_t* param_buf, uint16_t param_buf_size,uint16_t* param_len);
 

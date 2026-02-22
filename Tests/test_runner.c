@@ -21,13 +21,18 @@ extern void test_CreatePacket_InvalidIDRange(void);
 extern void test_Checksum_SumExactly256(void);
 
 extern void test_ParseResponse_HardwareError(void);
-extern void test_ParseResponse_IDMismatch(void) ;
+extern void test_ParseResponse_IDMismatch(void);
 extern void test_ParseResponse_ChecksumError(void);
 extern void test_ParseResponse_ValidPosition(void);
 extern void test_ParseResponse_MinimumLength(void);
 extern void test_ParseResponse_LengthMismatch(void);
 extern void test_ParseResponse_NullGuards(void);
 extern void test_ParseResponse_OverloadError(void);
+
+extern void test_Protocol_Integration_Loopback(void);
+extern void test_Protocol_Integration_MultiByteRead(void);
+extern void test_Protocol_Integration_Robustness_Seeker(void);
+extern void test_Protocol_Integration_FalseHeaderRecovery(void);
 
 extern void setUp(void);
 extern void tearDown(void);
@@ -67,7 +72,11 @@ int main(void) {
     RUN_TEST(test_ParseResponse_NullGuards);
     RUN_TEST(test_ParseResponse_OverloadError);
 
-
+    printf("\n--- STS Protocol Integration Tests ---\n");
+    RUN_TEST(test_Protocol_Integration_Loopback);
+    RUN_TEST(test_Protocol_Integration_MultiByteRead);
+    RUN_TEST(test_Protocol_Integration_Robustness_Seeker);
+    RUN_TEST(test_Protocol_Integration_FalseHeaderRecovery);
     
     return UNITY_END();
 }

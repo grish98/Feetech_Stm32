@@ -19,6 +19,8 @@
 
 #define STS_MAX_ID 254
 #define STS_MAX_PARAM_LEN 253
+#define STS_Header 0xFF
+
 
 uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len) {
     if (pkt_buf == NULL || pkt_len < STS_MIN_PACKET_SIZE) {
@@ -47,8 +49,8 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
   if (pkt_buf_size < total_packet_size){
       return STS_ERR_INVALID_LEN;
   }
-    pkt_buf[STS_IDX_HEADER_1] = 0xFF;
-    pkt_buf[STS_IDX_HEADER_2] = 0xFF;
+    pkt_buf[STS_IDX_HEADER_1] = STS_Header;
+    pkt_buf[STS_IDX_HEADER_2] = STS_Header;
     pkt_buf[STS_IDX_ID]          = id;
     pkt_buf[STS_IDX_LENGTH]      = param_len + STS_LENGTH_FIXED_OVERHEAD;
     pkt_buf[STS_IDX_INSTRUCTION] = instruction;
@@ -62,8 +64,19 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
   
 }
 
+/**
+ * @brief Performs  validation of a potential STS packet.
+ * * Checks for  headers, verifies the target ID, ensures the buffer length 
+ * matches the protocol's length field, and validates the checksum. 
+ * Inspects the status byte for  hardware errors.
+ *
+ * @param expected_id  The ID expected to see in the packet.
+ * @param rx_buf       Pointer to the start of the packet.
+ * @param rx_len       The  number of bytes provided for this packet.
+ * @return sts_result_t STS_OK or specific error code.
+ */
 static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len) {
-    if (rx_buf[STS_IDX_HEADER_1] != 0xFF || rx_buf[STS_IDX_HEADER_2] != 0xFF) {
+    if (rx_buf[STS_IDX_HEADER_1] != STS_Header || rx_buf[STS_IDX_HEADER_2] != STS_Header) {
       return STS_ERR_HEADER;
     }
     if (rx_buf[STS_IDX_ID] != expected_id)
@@ -88,26 +101,70 @@ static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_b
     return STS_OK;
 }
 
+/**
+ * @brief Scans a raw buffer to locate the STS sync headers (0xFF 0xFF).
+ *
+ * This helper implements a sliding window search. It ensures that any header found
+ * has enough trailing buffer space to potentially contain a full STS packet, 
+ * preventing out-of-bounds reads during subsequent validation.
+ *
+ * @param buf  Pointer to the beginning of the search area.
+ * @param len  Remaining length of the buffer to scan.
+ * @return     Pointer to the first 0xFF of the sync header, or NULL if no valid 
+ * header-start is found within the remaining length.
+ */
+static const uint8_t* sts_find_packet_start(const uint8_t* buf, uint16_t len) {
+    if (len < STS_MIN_PACKET_SIZE) {
+      return NULL;
+    }
+
+    for (uint16_t i = 0; i <= (len - STS_MIN_PACKET_SIZE); i++) {
+        if (buf[i] == STS_Header && buf[i+1] == STS_Header) {
+            return &buf[i];
+        }
+    }
+    return NULL;
+}
+
 sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len, uint8_t* param_buf, uint16_t param_buf_size, uint16_t* param_len) {
 
-    if (rx_buf == NULL || param_buf == NULL || param_len == NULL) {
-      return STS_ERR_NULL_PTR;
-    }
-    if (rx_len < STS_MIN_PACKET_SIZE) {
-      return STS_ERR_INVALID_LEN;
-    }
+  if (rx_buf == NULL || param_buf == NULL || param_len == NULL) {
+    return STS_ERR_NULL_PTR;
+  }
 
-    sts_result_t status = sts_validate_packet(expected_id, rx_buf, rx_len);
-    if (status != STS_OK) {
-      return status;
-    }
+  const uint8_t* current_pos = rx_buf;
+  uint16_t remaining_len = rx_len;
 
-    uint16_t extracted_len = (uint16_t)(rx_buf[STS_IDX_LENGTH] - STS_LENGTH_FIXED_OVERHEAD);
-    if (extracted_len > param_buf_size){
-      return STS_ERR_INVALID_LEN;
-    }
+  sts_result_t last_error = STS_ERR_HEADER;
 
-    memcpy(param_buf, &rx_buf[STS_IDX_PARAM_START], extracted_len);
-    *param_len = extracted_len;
-    return STS_OK;
+  while (remaining_len >= STS_MIN_PACKET_SIZE) {
+          const uint8_t* packet_start = sts_find_packet_start(current_pos, remaining_len);
+          
+          if (packet_start == NULL){
+            break; 
+          }
+
+          uint16_t skipped = (uint16_t)(packet_start - current_pos);
+          remaining_len -= skipped;
+
+          sts_result_t status = sts_validate_packet(expected_id, packet_start, remaining_len);
+          
+          if (status == STS_OK) {
+              uint16_t extracted_len = (uint16_t)(packet_start[STS_IDX_LENGTH] - STS_LENGTH_FIXED_OVERHEAD);
+              if (extracted_len > param_buf_size) {
+                return STS_ERR_INVALID_LEN;
+              }
+
+              memcpy(param_buf, &packet_start[STS_IDX_PARAM_START], extracted_len);
+              *param_len = extracted_len;
+              return STS_OK;
+          }
+
+          last_error = status;
+
+          current_pos = packet_start +1; 
+          remaining_len -= 1;
+      }
+
+    return last_error;
 }
