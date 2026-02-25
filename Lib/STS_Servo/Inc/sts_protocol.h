@@ -4,7 +4,7 @@
  * @brief          : Feetech STS Servo Protocol API
  * @author         : Grisham Balloo
  * @date           : 2026-02-22
- * @version        : 1.0.0
+ * @version        : 1.1.0
  ******************************************************************************
  * @details
  * This module defines the public interface for the Feetech STS Servo Protocol.
@@ -15,6 +15,14 @@
  * - Addressing   : 0-253 , 254 (Broadcast)
  * - Integrity    : 8-bit truncated sum-check 
  * - Payload      : 0-253 bytes variable parameters
+ *
+ * Design Philosophy:
+ * - Zero dynamic memory allocation (Safe for deterministic real-time control).
+ * - Stateless execution (Allows multiple servos to be parsed independently).
+ * - Self-healing logic (Automatically recovers from bus collisions or noise).
+ * - Status-Return Pattern: All functions return explicit error codes (sts_result_t)
+ * to ensure deterministic error handling.
+ *
  * * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
  ******************************************************************************
@@ -68,11 +76,12 @@ typedef enum {
  * @brief Calculates the Feetech STS Checksum.
  * * Sums ID, Length, Instruction, and Parameters (skipping the initial 0xFF 0xFF headers), then returns the 
  * bitwise NOT of the 8-bit truncation.
- * * @param pkt_buf   Pointer to the start of the packet buffer.
- * @param pkt_len   Total packet length (including headers and checksum slot).
- * @return uint8_t The calculated checksum, or 0 if inputs are invalid.
+ * @param[in]  pkt_buf      Pointer to the start of the packet buffer.
+ * @param[in]  pkt_len      Total packet length to process.
+ * @param[out] checksum_out Pointer to store the 8-bit NOT-sum result.
+ * @return sts_result_t     STS_OK on success, error code otherwise
  */
-uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len);
+sts_result_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len, uint8_t* checksum_out);
 
 /**
  * @brief Constructs an STS packet in the provided buffer.

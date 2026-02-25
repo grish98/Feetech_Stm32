@@ -4,7 +4,7 @@
  * @brief          : Feetech STS Servo Protocol Implementation
  * @author         : Grisham Balloo
  * @date           : 2026-02-22
- * @version        : 1.0.0
+ * @version        : 1.1.0
  ******************************************************************************
  * @details
  * This module implements the core logic for encoding and decoding Feetech STS
@@ -18,10 +18,6 @@
  * 3. Response Parsing: Synchronizes and extracts valid servo data from a 
  * raw byte stream, filtered for errors and noise.
  *
-* Design Philosophy:
- * - Zero dynamic memory allocation (Safe for deterministic real-time control).
- * - Stateless execution (Allows multiple servos to be parsed independently).
- * - Self-healing logic (Automatically recovers from bus collisions or noise).
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -33,18 +29,26 @@
 #include <string.h>
 #include "sts_protocol.h"
 
-uint8_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len) {
-    if (pkt_buf == NULL || pkt_len < STS_MIN_PACKET_SIZE) {
-        return 0;
-    }
-    uint32_t sum = 0;
-    // Skip the headers and stop before the checksum byte.
-    uint16_t checksum_index = pkt_len - STS_CHECKSUM_SIZE;
 
-    for (uint16_t i = STS_HEADER_SIZE; i < checksum_index; i++) {
-        sum += pkt_buf[i];
+sts_result_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len, uint8_t* checksum_out) {
+    if (pkt_buf == NULL || checksum_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    if (pkt_len < STS_MIN_PACKET_SIZE) {
+        return STS_ERR_INVALID_LEN;
+    }
+
+    uint32_t sum = 0U; 
+    uint16_t checksum_index = pkt_len - (uint16_t)STS_CHECKSUM_SIZE;
+
+    for (uint16_t i = (uint16_t)STS_HEADER_SIZE; i < checksum_index; i++) {
+        sum += (uint32_t)pkt_buf[i];
     } 
-    return (uint8_t)(~(sum & 0xFF));
+
+    *checksum_out = (uint8_t)(~((uint8_t)(sum & 0xFFU)));
+
+    return STS_OK;
 }
 
 sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* param_buf, uint16_t param_len, uint8_t* pkt_buf, uint16_t pkt_buf_size) {
@@ -70,8 +74,12 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
       memcpy(&pkt_buf[STS_IDX_PARAM_START], param_buf, param_len); 
     }
 
-    pkt_buf[total_packet_size - STS_CHECKSUM_SIZE] = sts_calculate_checksum(pkt_buf, total_packet_size);
-
+   uint8_t calculated_cs = 0;
+    sts_result_t res = sts_calculate_checksum(pkt_buf, total_packet_size, &calculated_cs);
+    if (res != STS_OK) {
+        return res;
+    }
+    pkt_buf[total_packet_size - 1] = calculated_cs;
     return STS_OK;
 }
 
@@ -87,29 +95,39 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
  * @return sts_result_t STS_OK or specific error code.
  */
 static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len) {
-    if (rx_buf[STS_IDX_HEADER_1] != STS_HEADER || rx_buf[STS_IDX_HEADER_2] != STS_HEADER) {
-      return STS_ERR_HEADER;
+  if (rx_len < STS_MIN_PACKET_SIZE) {
+        return STS_ERR_MALFORMED;
     }
-    if (rx_buf[STS_IDX_ID] != expected_id)
-    {
-       return STS_ERR_ID_MISMATCH; 
-    }
+  if (rx_buf[STS_IDX_HEADER_1] != STS_HEADER || rx_buf[STS_IDX_HEADER_2] != STS_HEADER) {
+    return STS_ERR_HEADER;
+  }
+  if (rx_buf[STS_IDX_ID] != expected_id)
+  {
+      return STS_ERR_ID_MISMATCH; 
+  }
 
-    uint8_t protocol_len = rx_buf[STS_IDX_LENGTH];
-    if (protocol_len + STS_PKT_FIXED_TOTAL != rx_len){
-       return STS_ERR_MALFORMED;
-    }
+  uint8_t protocol_len = rx_buf[STS_IDX_LENGTH];
+  uint16_t expected_total_len = (uint16_t)protocol_len + STS_PKT_FIXED_TOTAL;
+  if (expected_total_len > rx_len){
+      return STS_ERR_MALFORMED;
+  }
 
-    if (sts_calculate_checksum(rx_buf, rx_len) != rx_buf[rx_len - 1]) {
+  uint8_t calculated_cs = 0;
+  sts_result_t res = sts_calculate_checksum(rx_buf, expected_total_len, &calculated_cs);
+  if (res != STS_OK) {
+      return res;
+  }
+
+  if (calculated_cs != rx_buf[expected_total_len - 1]) {
       return STS_ERR_CHECKSUM;
-    }
+  }
 
-    if (rx_buf[STS_IDX_INSTRUCTION] != STS_HARDWARE_OK) 
-    {
-      return STS_ERR_HARDWARE;
-    }
+  if (rx_buf[STS_IDX_INSTRUCTION] != STS_HARDWARE_OK) 
+  {
+    return STS_ERR_HARDWARE;
+  }
 
-    return STS_OK;
+  return STS_OK;
 }
 
 /**
@@ -156,6 +174,7 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
           }
 
           uint16_t skipped = (uint16_t)(packet_start - current_pos);
+          current_pos = packet_start;
           remaining_len -= skipped;
 
           sts_result_t status = sts_validate_packet(expected_id, packet_start, remaining_len);
@@ -173,8 +192,8 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
 
           last_error = status;
 
-          current_pos = packet_start +1; 
-          remaining_len -= 1;
+          current_pos++; 
+          remaining_len--;
       }
 
     return last_error;

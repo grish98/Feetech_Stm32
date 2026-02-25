@@ -4,7 +4,7 @@
  * @brief          : Unit Tests for STS Protocol Layer
  * @author         : Grisham Balloo
  * @date           : 2026-02-22
- * @version        : 1.0.0
+ * @version        : 1.1.0
  ******************************************************************************
  * @details
  * This test suite provides  verification for the Feetech STS
@@ -50,8 +50,10 @@ void test_Checksum_Ping(void) {
     // 6 bytes total: {FF, FF, ID, LEN, INST, CHK_SLOT}
     uint8_t packet[] = {0xFF, 0xFF, 0x01, 0x02, 0x01, 0x00}; 
 
-    uint8_t calculated = sts_calculate_checksum(packet, sizeof(packet));
+    uint8_t calculated = 0;
+    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
 
+    TEST_ASSERT_EQUAL(STS_OK, res);
     TEST_ASSERT_EQUAL_HEX8(0xFB, calculated);
 }
 
@@ -61,8 +63,12 @@ void test_Checksum_Maximum_Sum(void) {
     // Truncate to 8-bit = 0xF6
     // ~0xF6 = 0x09
     uint8_t packet[] = {0xFF, 0xFF, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0x00};
+    uint8_t calculated = 0;
 
-    TEST_ASSERT_EQUAL_HEX8(0x09, sts_calculate_checksum(packet, sizeof(packet)));
+    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
+
+    TEST_ASSERT_EQUAL(STS_OK, res);
+    TEST_ASSERT_EQUAL_HEX8(0x09, calculated);
 }
 
 void test_Checksum_Min_Length_Alternative_ID(void) {
@@ -70,25 +76,35 @@ void test_Checksum_Min_Length_Alternative_ID(void) {
     // Sum = 10 + 2 + 1 = 13 (0x0D)
     // ~0x0D = 0xF2
     uint8_t packet[] = {0xFF, 0xFF, 0x0A, 0x02, 0x01, 0x00};
+    uint8_t calculated = 0;
 
-    TEST_ASSERT_EQUAL_HEX8(0xF2, sts_calculate_checksum(packet, sizeof(packet)));
+    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    TEST_ASSERT_EQUAL(STS_OK, res);
+    TEST_ASSERT_EQUAL_HEX8(0xF2, calculated);
 }
 
 void test_Checksum_Null_Pointer(void) {
-    // Should return 0 and NOT crash 
-    TEST_ASSERT_EQUAL_HEX8(0, sts_calculate_checksum(NULL, 10));
+  uint8_t calculated = 0;
+    
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10, &calculated));
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10, NULL));
 }
 
 void test_Checksum_Too_Short(void) {
     // Any packet under 6 bytes is invalid protocol-wise
     uint8_t packet[] = {0xFF, 0xFF, 0x01};
-    TEST_ASSERT_EQUAL_HEX8(0, sts_calculate_checksum(packet, sizeof(packet)));
+    uint8_t calculated = 0;
+
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, sts_calculate_checksum(packet, sizeof(packet), &calculated));
 }
 
 void test_Checksum_Ignores_Headers_And_Final_Byte(void) {
     // Sum should only care about: ID(1) + Len(2) + Instr(1) = 4
     uint8_t packet[] = {0xAA, 0xAA, 0x01, 0x02, 0x01, 0x55};
-    TEST_ASSERT_EQUAL_HEX8(0xFB, sts_calculate_checksum(packet, sizeof(packet)));
+    uint8_t calculated = 0;
+
+    sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    TEST_ASSERT_EQUAL_HEX8(0xFB, calculated);
 }
 
 void test_Checksum_SumExactly256(void) {
@@ -97,8 +113,11 @@ void test_Checksum_SumExactly256(void) {
     // Truncate to 8-bit = 0x00
     // ~0x00 = 0xFF
     uint8_t packet[] = {0xFF, 0xFF, 0x80, 0x7E, 0x02, 0x00};
+    uint8_t calculated = 0;
 
-    TEST_ASSERT_EQUAL_HEX8(0xFF, sts_calculate_checksum(packet, sizeof(packet)));
+
+    sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, calculated);
 }
 
 /* =========================================================================
@@ -338,8 +357,12 @@ void test_ParseResponse_MaxPayload(void) {
     rx[0] = 0xFF; rx[1] = 0xFF; rx[2] = 0x01;
     rx[3] = 255;  // protocol_len
     rx[4] = 0x00;  // Status
-    memset(&rx[5], 0xAA, 253); // Fill 253 bytes of data
-    rx[258] = sts_calculate_checksum(rx, 259);
+    memset(&rx[5], 0xAA, 253); 
+
+    uint8_t checksum= 0;
+    sts_result_t crc_res = sts_calculate_checksum(rx, sizeof(rx), &checksum);
+    TEST_ASSERT_EQUAL(STS_OK, crc_res); // Ensure the test setup itself is valid
+    rx[258] = checksum;
 
     uint8_t param_buf[255];
     uint16_t param_len;
@@ -369,7 +392,11 @@ void test_ParseResponse_OutputBufferSafety(void) {
     // Packet: Headers(2), ID(1), Len(12), Status(1), Data(10), Checksum(1) = 16 bytes total
     // protocol_len (rx[3]) is 12 (Status + 10 Data + Checksum)
     uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x0C, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0x00};
-    rx[15] = sts_calculate_checksum(rx, sizeof(rx));
+
+    uint8_t checksum = 0;
+    sts_result_t crc_res = sts_calculate_checksum(rx, sizeof(rx), &checksum);
+    TEST_ASSERT_EQUAL(STS_OK, crc_res);
+    rx[15] = checksum;
     
     uint8_t small_param_buf[2]; // Target buffer is only 2 bytes
     uint16_t param_len = 0;
