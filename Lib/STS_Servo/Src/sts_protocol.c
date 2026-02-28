@@ -3,8 +3,8 @@
  * @file           : sts_protocol.c
  * @brief          : Feetech STS Servo Protocol Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
- * @version        : 1.1.0
+ * @date           : 2026-02-28
+ * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This module implements the core logic for encoding and decoding Feetech STS
@@ -17,7 +17,6 @@
  * ready-to-transmit binary packets.
  * 3. Response Parsing: Synchronizes and extracts valid servo data from a 
  * raw byte stream, filtered for errors and noise.
- *
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -45,62 +44,71 @@ sts_result_t sts_calculate_checksum(const uint8_t* pkt_buf, uint16_t pkt_len, ui
     for (uint16_t i = (uint16_t)STS_HEADER_SIZE; i < checksum_index; i++) {
         sum += (uint32_t)pkt_buf[i];
     } 
-
-    *checksum_out = (uint8_t)(~((uint8_t)(sum & 0xFFU)));
-
+    *checksum_out = (uint8_t)(~((sum & 0xFFU)));
     return STS_OK;
 }
 
 sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* param_buf, uint16_t param_len, uint8_t* pkt_buf, uint16_t pkt_buf_size) {
  
-  if (pkt_buf == NULL || (param_len > 0 && param_buf == NULL)) {
-    return STS_ERR_NULL_PTR;
-  }
-  if (id > STS_MAX_ID || param_len > STS_MAX_PARAM_LEN) {
-    return STS_ERR_INVALID_LEN;
-  }
-  const uint16_t total_packet_size = (uint16_t)STS_MIN_PACKET_SIZE + param_len;
-
-  if (pkt_buf_size < total_packet_size){
-      return STS_ERR_INVALID_LEN;
-  }
-    pkt_buf[STS_IDX_HEADER_1] = STS_HEADER;
-    pkt_buf[STS_IDX_HEADER_2] = STS_HEADER;
-    pkt_buf[STS_IDX_ID]          = id;
-    pkt_buf[STS_IDX_LENGTH]      = param_len + STS_LENGTH_FIXED_OVERHEAD;
-    pkt_buf[STS_IDX_INSTRUCTION] = instruction;
- 
-    if (param_len > 0) {
-      memcpy(&pkt_buf[STS_IDX_PARAM_START], param_buf, param_len); 
+    if (pkt_buf == NULL || (param_len > 0U && param_buf == NULL)) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    if (id > STS_MAX_ID || instruction == 0U || instruction > STS_MAX_INSTRUCTION) {
+        return STS_ERR_INVALID_PARAM;
     }
 
-   uint8_t calculated_cs = 0;
+    if (param_len > STS_MAX_PARAM_LEN) {
+        return STS_ERR_INVALID_LEN;
+    }
+
+    const uint16_t total_packet_size = (uint16_t)STS_MIN_PACKET_SIZE + param_len;
+
+    if (pkt_buf_size < total_packet_size) {
+        return STS_ERR_BUF_TOO_SMALL;
+    }
+
+    pkt_buf[STS_IDX_HEADER_1]    = STS_HEADER;
+    pkt_buf[STS_IDX_HEADER_2]    = STS_HEADER;
+    pkt_buf[STS_IDX_ID]          = id;
+
+    pkt_buf[STS_IDX_LENGTH]      = (uint8_t)(param_len + (uint16_t)STS_LENGTH_FIXED_OVERHEAD);
+    pkt_buf[STS_IDX_INSTRUCTION] = instruction;
+ 
+    if (param_len > 0U) {
+        (void)memcpy(&pkt_buf[STS_IDX_PARAM_START], param_buf, param_len); 
+    }
+
+    uint8_t calculated_cs = 0U;
     sts_result_t res = sts_calculate_checksum(pkt_buf, total_packet_size, &calculated_cs);
     if (res != STS_OK) {
         return res;
     }
-    pkt_buf[total_packet_size - 1] = calculated_cs;
+
+    pkt_buf[total_packet_size - 1U] = calculated_cs;
     return STS_OK;
 }
 
 /**
- * @brief Performs  validation of STS packet.
- * * Checks for  headers, verifies the target ID, ensures the buffer length 
+ * @brief Performs validation of STS packet.
+ * Checks for headers, verifies the target ID, ensures the buffer length 
  * matches the protocol's length field, and validates the checksum. 
- * Inspects the status byte for  hardware errors.
+ * Inspects the status byte for hardware errors.
  *
  * @param expected_id  The ID expected to see in the packet.
  * @param rx_buf       Pointer to the start of the packet.
- * @param rx_len       The  number of bytes provided for this packet.
+ * @param rx_len       The number of bytes provided for this packet.
  * @return sts_result_t STS_OK or specific error code.
  */
 static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len) {
   if (rx_len < STS_MIN_PACKET_SIZE) {
         return STS_ERR_MALFORMED;
     }
+
   if (rx_buf[STS_IDX_HEADER_1] != STS_HEADER || rx_buf[STS_IDX_HEADER_2] != STS_HEADER) {
     return STS_ERR_HEADER;
   }
+  
   if (rx_buf[STS_IDX_ID] != expected_id)
   {
       return STS_ERR_ID_MISMATCH; 
@@ -112,7 +120,7 @@ static sts_result_t sts_validate_packet(uint8_t expected_id, const uint8_t* rx_b
       return STS_ERR_MALFORMED;
   }
 
-  uint8_t calculated_cs = 0;
+  uint8_t calculated_cs = 0U;
   sts_result_t res = sts_calculate_checksum(rx_buf, expected_total_len, &calculated_cs);
   if (res != STS_OK) {
       return res;
@@ -147,8 +155,8 @@ static const uint8_t* sts_find_packet_start(const uint8_t* buf, uint16_t len) {
       return NULL;
     }
 
-    for (uint16_t i = 0; i <= (len - STS_MIN_PACKET_SIZE); i++) {
-        if (buf[i] == STS_HEADER && buf[i+1] == STS_HEADER) {
+    for (uint16_t i = 0U; i <= (len - STS_MIN_PACKET_SIZE); i++) {
+        if (buf[i] == STS_HEADER && buf[i+1U] == STS_HEADER) {
             return &buf[i];
         }
     }
@@ -157,44 +165,46 @@ static const uint8_t* sts_find_packet_start(const uint8_t* buf, uint16_t len) {
 
 sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len, uint8_t* param_buf, uint16_t param_buf_size, uint16_t* param_len) {
 
-  if (rx_buf == NULL || param_buf == NULL || param_len == NULL) {
-    return STS_ERR_NULL_PTR;
-  }
+    if (rx_buf == NULL || param_buf == NULL || param_len == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
 
-  const uint8_t* current_pos = rx_buf;
-  uint16_t remaining_len = rx_len;
+    const uint8_t* current_pos = rx_buf;
+    uint16_t remaining_len = rx_len;
 
-  sts_result_t last_error = STS_ERR_HEADER;
+    sts_result_t last_error = STS_ERR_HEADER;
 
-  while (remaining_len >= STS_MIN_PACKET_SIZE) {
-          const uint8_t* packet_start = sts_find_packet_start(current_pos, remaining_len);
-          
-          if (packet_start == NULL){
+    while (remaining_len >= (uint16_t)STS_MIN_PACKET_SIZE) {
+        const uint8_t* packet_start = sts_find_packet_start(current_pos, remaining_len);
+        
+        if (packet_start == NULL) {
             break; 
-          }
+        }
 
-          uint16_t skipped = (uint16_t)(packet_start - current_pos);
-          current_pos = packet_start;
-          remaining_len -= skipped;
+        uint16_t skipped = (uint16_t)(packet_start - current_pos);
+        current_pos = packet_start;
+        remaining_len -= skipped;
 
-          sts_result_t status = sts_validate_packet(expected_id, packet_start, remaining_len);
-          
-          if (status == STS_OK) {
-              uint16_t extracted_len = (uint16_t)(packet_start[STS_IDX_LENGTH] - STS_LENGTH_FIXED_OVERHEAD);
-              if (extracted_len > param_buf_size) {
-                return STS_ERR_INVALID_LEN;
-              }
+        sts_result_t status = sts_validate_packet(expected_id, packet_start, remaining_len);
+        last_error = status;
 
-              memcpy(param_buf, &packet_start[STS_IDX_PARAM_START], extracted_len);
-              *param_len = extracted_len;
-              return STS_OK;
-          }
+        if (status == STS_OK) {
+            if (packet_start[STS_IDX_LENGTH] < (uint8_t)STS_LENGTH_FIXED_OVERHEAD) {
+                last_error = STS_ERR_MALFORMED;
+            } else {
+                uint16_t extracted_len = (uint16_t)(packet_start[STS_IDX_LENGTH] - (uint8_t)STS_LENGTH_FIXED_OVERHEAD);
+                if (extracted_len > param_buf_size) {
+                    return STS_ERR_BUF_TOO_SMALL;
+                }
 
-          last_error = status;
+                (void)memcpy(param_buf, &packet_start[STS_IDX_PARAM_START], extracted_len);
+                *param_len = extracted_len;
+                return STS_OK;
+            }
+        }
 
-          current_pos++; 
-          remaining_len--;
-      }
-
+        current_pos++; 
+        remaining_len--;
+    }
     return last_error;
 }

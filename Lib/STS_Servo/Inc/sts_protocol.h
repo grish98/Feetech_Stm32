@@ -3,8 +3,8 @@
  * @file           : sts_protocol.h
  * @brief          : Feetech STS Servo Protocol API
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
- * @version        : 1.1.0
+ * @date           : 2026-02-28
+ * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This module defines the public interface for the Feetech STS Servo Protocol.
@@ -32,26 +32,27 @@
 #include <stdint.h>
 
 /* --- Protocol Structural Constants --- */
-#define STS_HEADER                0xFF
-#define STS_HEADER_SIZE           2
-#define STS_CHECKSUM_SIZE         1
-#define STS_LENGTH_FIXED_OVERHEAD 2    /* ID + Checksum  */
-#define STS_PKT_FIXED_TOTAL       4    /* Header(2) + ID(1) + Length(1) */
-#define STS_MIN_PACKET_SIZE       6    /* Header(2)+ID(1)+Len(1)+Inst(1)+CS(1) */
-#define STS_MAX_PACKET_SIZE       255 /* Max total size including headers and checksum */
+#define STS_HEADER                0xFFU
+#define STS_HEADER_SIZE           2U
+#define STS_CHECKSUM_SIZE         1U
+#define STS_LENGTH_FIXED_OVERHEAD 2U   /* ID + Checksum  */
+#define STS_PKT_FIXED_TOTAL       4U   /* Header(2) + ID(1) + Length(1) */
+#define STS_MIN_PACKET_SIZE       6U   /* Header(2)+ID(1)+Len(1)+Inst(1)+CS(1) */
+#define STS_MAX_PACKET_SIZE       255U /* Max total size including headers and checksum */
 
 /* --- Packet Layout Indices --- */
-#define STS_IDX_HEADER_1          0
-#define STS_IDX_HEADER_2          1
-#define STS_IDX_ID                2
-#define STS_IDX_LENGTH            3
-#define STS_IDX_INSTRUCTION       4    /* Also used as Status byte in responses */
-#define STS_IDX_PARAM_START       5
+#define STS_IDX_HEADER_1          0U
+#define STS_IDX_HEADER_2          1U
+#define STS_IDX_ID                2U
+#define STS_IDX_LENGTH            3U
+#define STS_IDX_INSTRUCTION       4U   /* Also used as Status byte in responses */
+#define STS_IDX_PARAM_START       5U
 
 /* --- Protocol Limits --- */
-#define STS_MAX_ID                254
-#define STS_MAX_PARAM_LEN         253
-#define STS_HARDWARE_OK           0x00
+#define STS_MAX_ID                254U
+#define STS_MAX_PARAM_LEN         253U
+#define STS_HARDWARE_OK           0x00U
+#define STS_MAX_INSTRUCTION       0x05U /* Valid range: 0x01 (Ping) to 0x05 (Reset) */
 
 
 /**
@@ -61,6 +62,8 @@ typedef enum {
     STS_OK = 0,               /**< Operation successful */
     STS_ERR_NULL_PTR,         /**< Provided pointer was NULL */
     STS_ERR_INVALID_LEN,      /**< Length provided is outside protocol limits */
+    STS_ERR_INVALID_PARAM,    /**< Invalid ID or Instruction code provided */
+    STS_ERR_BUF_TOO_SMALL,    /**< Provided buffer cannot hold the generated packet */
     STS_ERR_TIMEOUT,          /**< Servo did not respond within the deadline */
     STS_ERR_HEADER,            /**< Packet does not start with 0xFF 0xFF */
     STS_ERR_ID_MISMATCH,      /**< Response ID does not match expected ID */
@@ -74,7 +77,7 @@ typedef enum {
 
 /**
  * @brief Calculates the Feetech STS Checksum.
- * * Sums ID, Length, Instruction, and Parameters (skipping the initial 0xFF 0xFF headers), then returns the 
+ * Sums ID, Length, Instruction, and Parameters (skipping the initial 0xFF 0xFF headers), then returns the 
  * bitwise NOT of the 8-bit truncation.
  * @param[in]  pkt_buf      Pointer to the start of the packet buffer.
  * @param[in]  pkt_len      Total packet length to process.
