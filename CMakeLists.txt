@@ -38,6 +38,7 @@ set(FIRMWARE_SOURCES
 set(TEST_SOURCES
     Tests/test_runner.c
     Tests/test_sts_protocol.c
+    Tests/test_sts_utils.c
     Tests/Unity/unity.c
 )
 
@@ -67,6 +68,7 @@ else()
     add_executable(test_runner ${TEST_SOURCES} ${DRIVER_SOURCES})
     target_include_directories(test_runner PRIVATE 
         Lib/Sts_Servo/Inc
+        Tests           # Added: Allows test files to find utils.h easily
         Tests/Unity
         App/Inc
     )

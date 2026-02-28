@@ -3,8 +3,8 @@
  * @file           : test_sts_protocol.h
  * @brief          : Prototypes for STS Protocol Verification Suite
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
- * @version        : 1.0.0
+ * @date           : 2026-02-28
+ * @version        : 1.1.0
  ******************************************************************************
  * @details
  * This header centralizes all test function prototypes for the STS Protocol 
@@ -12,9 +12,9 @@
  *
  * Test Groups:
  * 1. Checksum Verification (7 tests): Algorithm accuracy and boundary safety.
- * 2. Serialization Verification (11 tests): Packet encoding and buffer safety.
- * 3. Protocol Validation (8 tests): Rejection of malformed or invalid packets.
- * 4. Frame Synchronization (4 tests): Recovery from noise and false headers.
+ * 2. Packet Creation (11 tests): Packet encoding and buffer safety.
+ * 3. Packet Parsing (15 tests): Rejection of malformed or invalid packets.
+ * 4. Protocol Intergration (5 tests): Recovery from noise and false headers.
  *
  * @note All functions conform to the Unity Test Framework signature: void func(void).
  * @attention
@@ -61,6 +61,13 @@ extern void test_ParseResponse_MinimumLength(void);
 extern void test_ParseResponse_LengthMismatch(void);
 extern void test_ParseResponse_NullGuards(void);
 extern void test_ParseResponse_OverloadError(void);
+extern void test_ParseResponse_OutputBufferSafety(void);
+extern void test_ParseResponse_HeaderError_FirstByte(void);
+extern void test_ParseResponse_HeaderError_SecondByte(void);
+extern void test_ParseResponse_IncompletePacket(void);
+extern void test_ParseResponse_MaxPayload(void);
+extern void test_ParseResponse_BoundaryIDs(void);
+extern void test_ParseResponse_JunkData(void);
 
 /* =========================================================================
    PROTOCOL INTEGRATION TESTS
@@ -69,7 +76,7 @@ extern void test_Protocol_Integration_Loopback(void);
 extern void test_Protocol_Integration_MultiByteRead(void);
 extern void test_Protocol_Integration_Robustness_Seeker(void);
 extern void test_Protocol_Integration_FalseHeaderRecovery(void);
-
+extern void test_Protocol_Integration_Filters_Wrong_ID(void);
 /* =========================================================================
    UNITY FRAMEWORK FIXTURES
    ========================================================================= */

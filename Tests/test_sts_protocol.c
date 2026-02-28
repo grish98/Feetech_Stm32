@@ -3,8 +3,8 @@
  * @file           : test_sts_protocol.c
  * @brief          : Unit Tests for STS Protocol Layer
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
- * @version        : 1.1.0
+ * @date           : 2026-02-28
+ * @version        : 1.2.0 
  ******************************************************************************
  * @details
  * This test suite provides  verification for the Feetech STS
@@ -15,9 +15,9 @@
  * algorithm, handling of maximum sums, and null-pointer safety.
  * 2. Packet Serialisation (11 tests): Validation of command construction,
  * broadcast ID handling, and buffer boundary constraints.
- * 3. Parser Robustness (8 tests): Verification of error rejection for 
+ * 3. Parser Robustness (15 tests): Verification of error rejection for 
  * ID mismatches, hardware faults, and malformed length fields.
- * 4. Synchronication and Integration (4 tests):Stress-testing the 
+ * 4. Synchronication and Integration (5 tests):Stress-testing the 
  * sliding-window seeker against leading noise and false-header triggers 
  * to ensure recovery in real-world serial bus environments.
  *
@@ -32,6 +32,7 @@
 #include "sts_protocol.h"
 #include <stdint.h>
 #include<string.h>
+#include "test_sts_utils.h"
 
 
 void setUp(void) {
@@ -147,7 +148,7 @@ void test_CreatePacket_BufferTooSmall(void) {
 
     sts_result_t result = sts_create_packet(0x01, 0x01, NULL, 0, buffer, sizeof(buffer));
 
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, result);
+    TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
 }
 
 void test_CreatePacket_NullBuffer(void) {
@@ -200,7 +201,7 @@ void test_CreatePacket_InvalidIDRange(void) {
     uint8_t buffer[10];
     // ID 0xFF is  reserved 
     sts_result_t result = sts_create_packet(0xFF, 0x01, NULL, 0, buffer, 10);
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, result);
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, result);
 }
 
 void test_CreatePacket_EmptyParamsIgnorePointer(void) {
@@ -215,7 +216,7 @@ void test_CreatePacket_BufferExactlyOneByteTooSmall(void) {
     uint8_t buffer[10];
     uint8_t params[5]; // Total size needed: 6 + 5 = 11
     sts_result_t result = sts_create_packet(0x01, 0x03, params, 5, buffer, 10);
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, result);
+    TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
 }
 
 void test_CreatePacket_NullParamsWithNonZeroLength(void) {
@@ -402,8 +403,8 @@ void test_ParseResponse_OutputBufferSafety(void) {
     uint16_t param_len = 0;
 
     sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), small_param_buf, sizeof(small_param_buf), &param_len);
-
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, result);
+    printf("\nDEBUG: Parse returned value %d\n", (int)result);
+    TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
     // Ensure param_len wasn't modified or at least didn't indicate success
     TEST_ASSERT_EQUAL(0, param_len); 
 }
@@ -424,46 +425,44 @@ void test_ParseResponse_JunkData(void) {
    ========================================================================= */
 
 void test_Protocol_Integration_Loopback(void) {
-    // This test simulates a full loopback scenario where we create a packet and then immediately parse it. 
-    // This validates that the create and parse functions are consistent with each other.
-    uint8_t pkt_buf[16];          // Buffer for the created packet
-    uint8_t rx_param_buf[8];      // Buffer to hold extracted parameters
+    uint8_t pkt_buf[32];
+    uint8_t rx_param_buf[8];
     uint16_t rx_param_len = 0;
     
     uint8_t id = 0x01;
-    uint8_t status_ok = 0x00;
     uint8_t original_params[] = {0xAA, 0xBB}; 
-    uint16_t original_len = sizeof(original_params);
+    uint16_t original_len = (uint16_t)sizeof(original_params);
 
-    //  simulate a response, so instruction is actually the status byte.
-    sts_result_t create_res = sts_create_packet(id, status_ok, original_params, original_len, pkt_buf, sizeof(pkt_buf));
+    /* Use the simulator helper to create a 'healthy' response packet (Status 0x00) */
+    simulate_servo_response(id, STS_HARDWARE_OK, original_params, original_len, pkt_buf);
     
-    // The total length is STS_MIN_PACKET_SIZE (4) + parameter length (2) = 6
-    uint16_t total_len = STS_MIN_PACKET_SIZE + original_len;
-    sts_result_t parse_res = sts_parse_response(id, pkt_buf, total_len, rx_param_buf, sizeof(rx_param_buf), &rx_param_len);
+    uint16_t total_len = (uint16_t)STS_MIN_PACKET_SIZE + original_len;
+    
+    sts_result_t parse_res = sts_parse_response(id, pkt_buf, total_len, 
+                                                rx_param_buf, (uint16_t)sizeof(rx_param_buf), &rx_param_len);
   
-    TEST_ASSERT_EQUAL(STS_OK, create_res);
     TEST_ASSERT_EQUAL(STS_OK, parse_res);
     TEST_ASSERT_EQUAL(original_len, rx_param_len);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(original_params, rx_param_buf, original_len);
 }
 
 void test_Protocol_Integration_MultiByteRead(void) {
-    // This test simulates a read operation where the servo returns multiple bytes of data. 
-    // We create a packet with a known payload, then parse it and verify that we correctly extract the parameters.
-    uint8_t pkt_buf[32];
-    uint8_t rx_data[10];
+    uint8_t pkt_buf[64];
+    uint8_t rx_data[16];
     uint16_t rx_len = 0;
     uint8_t sensor_data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    uint16_t sensor_data_len = sizeof(sensor_data);
+    uint16_t sensor_data_len = (uint16_t)sizeof(sensor_data);
+    uint8_t target_id = 10U;
 
-    sts_create_packet(10, 0x00, sensor_data, sensor_data_len, pkt_buf, sizeof(pkt_buf));
+    /* Simulate the servo sending back multi-byte data */
+    simulate_servo_response(target_id, STS_HARDWARE_OK, sensor_data, sensor_data_len, pkt_buf);
 
-    uint16_t total_pkt_len = 6 + sensor_data_len; 
+    uint16_t total_pkt_len = (uint16_t)STS_MIN_PACKET_SIZE + sensor_data_len;
 
-    sts_result_t res = sts_parse_response(10, pkt_buf, total_pkt_len, rx_data, sizeof(rx_data), &rx_len);
+    sts_result_t res = sts_parse_response(target_id, pkt_buf, total_pkt_len, 
+                                          rx_data, (uint16_t)sizeof(rx_data), &rx_len);
 
-    TEST_ASSERT_EQUAL_HEX8(STS_OK, res); 
+    TEST_ASSERT_EQUAL(STS_OK, res); 
     TEST_ASSERT_EQUAL(sensor_data_len, rx_len);
     TEST_ASSERT_EQUAL_UINT8_ARRAY(sensor_data, rx_data, sensor_data_len);
 }
@@ -494,4 +493,26 @@ void test_Protocol_Integration_FalseHeaderRecovery(void) {
     sts_result_t res = sts_parse_response(1, tricky_buffer, sizeof(tricky_buffer), out_buf, sizeof(out_buf), &out_len);
 
     TEST_ASSERT_EQUAL_HEX8_MESSAGE(STS_OK, res, "Seeker failed to recover from a false header");
+}
+
+void test_Protocol_Integration_Filters_Wrong_ID(void) {
+    /* Verifies that the seeker correctly skips a valid packet 
+     * meant for a different ID to find the one we requested.
+     */
+    uint8_t buffer[64];
+    uint8_t out_param[8];
+    uint16_t out_len;
+    
+    /* Packet 1: ID 5 (Wrong ID) */
+    simulate_servo_response(5, STS_HARDWARE_OK, NULL, 0, &buffer[0]);
+    /* Packet 2: ID 1 (The target ID) */
+    uint8_t target_data[] = {0xDE, 0xAD};
+    simulate_servo_response(1, STS_HARDWARE_OK, target_data, 2, &buffer[6]);
+
+    sts_result_t res = sts_parse_response(1, buffer, 14, out_param, 8, &out_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, res);
+    TEST_ASSERT_EQUAL(2, out_len);
+    TEST_ASSERT_EQUAL_HEX8(0xDE, out_param[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xAD, out_param[1]);
 }

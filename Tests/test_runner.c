@@ -3,8 +3,8 @@
  * @file           : test_runner.c
  * @brief          : STS Protocol Layer Unit Test Runner
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
- * @version        : 1.0.0
+ * @date           : 2026-02-28
+ * @version        : 1.1.0
  ******************************************************************************
  * * @details 
  * This file serves as the main entry point for the STS Protocol Layer unit 
@@ -54,12 +54,20 @@ int main(void) {
     RUN_TEST(test_ParseResponse_LengthMismatch);
     RUN_TEST(test_ParseResponse_NullGuards);
     RUN_TEST(test_ParseResponse_OverloadError);
+    RUN_TEST(test_ParseResponse_OutputBufferSafety);
+    RUN_TEST(test_ParseResponse_HeaderError_FirstByte);
+    RUN_TEST(test_ParseResponse_HeaderError_SecondByte);
+    RUN_TEST(test_ParseResponse_IncompletePacket);
+    RUN_TEST(test_ParseResponse_MaxPayload);
+    RUN_TEST(test_ParseResponse_BoundaryIDs);
+    RUN_TEST(test_ParseResponse_JunkData);
 
     printf("\n--- STS Protocol Integration Tests ---\n");
     RUN_TEST(test_Protocol_Integration_Loopback);
     RUN_TEST(test_Protocol_Integration_MultiByteRead);
     RUN_TEST(test_Protocol_Integration_Robustness_Seeker);
     RUN_TEST(test_Protocol_Integration_FalseHeaderRecovery);
+    RUN_TEST(test_Protocol_Integration_Filters_Wrong_ID);
     
     return UNITY_END();
 }
