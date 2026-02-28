@@ -79,37 +79,32 @@ else()
     add_test(NAME ProtocolTests COMMAND test_runner)
     find_package(Doxygen)
 
-   find_package(Doxygen)
-    if(DOXYGEN_FOUND)
-        set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
-        set(DOXYGEN_GENERATE_LATEX NO)
-        set(DOXYGEN_RECURSIVE YES)
- 
-        set(DOXYGEN_EXCLUDE_PATTERNS 
-            "*/Drivers/*" 
-            "*/cmake/*" 
-            "*/build/*"
-        )
+   
+    find_package(Doxygen)
+        if(DOXYGEN_FOUND)
+            set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
+            set(DOXYGEN_GENERATE_LATEX NO)
+            set(DOXYGEN_RECURSIVE YES)
+            set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+    
+            set(DOXYGEN_EXCLUDE_PATTERNS 
+                "*/Drivers/*" 
+                "*/cmake/*" 
+                "*/build/*"
+                "*/Tests/*"
+            )
 
-        set(DOC_INPUT 
-            "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
-            "${CMAKE_CURRENT_SOURCE_DIR}/App"
-        )
+            set(DOC_INPUT 
+                "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
+                "${CMAKE_CURRENT_SOURCE_DIR}/App"
+            )
 
-        include(FindDoxygen)
-        doxygen_add_docs(docs
-            ${DOC_INPUT}
-            COMMENT "Generating API documentation..."
-        )
-
-        set(FINAL_DOCS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
-        add_custom_command(TARGET docs POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${FINAL_DOCS_DIR}
-            COMMAND ${CMAKE_COMMAND} -E copy_directory 
-                    ${CMAKE_CURRENT_BINARY_DIR}/html 
-                    ${FINAL_DOCS_DIR}/html
-        )
-    endif()
+            doxygen_add_docs(docs
+                ${DOC_INPUT}
+                COMMENT "Generating API documentation with README as landing page..."
+            )
+        endif()
 endif()
 
 
