@@ -23,8 +23,8 @@ project(${CMAKE_PROJECT_NAME})
 
 # Shared Library (Used by BOTH)
 set(DRIVER_SOURCES
-    Lib/Sts_Servo/Src/sts_protocol.c
-    Lib/Sts_Servo/Src/sts_servo.c
+    Lib/STS_Servo/Src/sts_protocol.c
+    Lib/STS_Servo/Src/sts_servo.c
 )
 
 # STM32 Only 
@@ -60,18 +60,37 @@ if(IS_ARM_BUILD)
     target_link_libraries(${CMAKE_PROJECT_NAME} stm32cubemx)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
         Core/Inc
-        Lib/Sts_Servo/Inc  
+        Lib/STS_Servo/Inc  
         App/Inc
     )
 else()
     message("Configuring for Native (Windows/Host)")
+
+    enable_testing()
+
     add_executable(test_runner ${TEST_SOURCES} ${DRIVER_SOURCES})
     target_include_directories(test_runner PRIVATE 
-        Lib/Sts_Servo/Inc
+        Lib/STS_Servo/Inc
         Tests           # Added: Allows test files to find utils.h easily
         Tests/Unity
         App/Inc
     )
+
+    add_test(NAME ProtocolTests COMMAND test_runner)
+    find_package(Doxygen)
+    if(DOXYGEN_FOUND)
+        set(DOXYGEN_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs")
+        
+        add_custom_target(docs
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${DOXYGEN_OUT_DIR}
+            # Generate a default Doxyfile if one doesn't exist, then run it
+            COMMAND ${DOXYGEN_EXECUTABLE} -g "${DOXYGEN_OUT_DIR}/Doxyfile"
+            COMMAND ${DOXYGEN_EXECUTABLE} "${DOXYGEN_OUT_DIR}/Doxyfile"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMENT "Generating API documentation..."
+            VERBATIM
+        )
+    endif()
 endif()
 
 
