@@ -78,17 +78,36 @@ else()
 
     add_test(NAME ProtocolTests COMMAND test_runner)
     find_package(Doxygen)
+
+   find_package(Doxygen)
     if(DOXYGEN_FOUND)
-        set(DOXYGEN_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/docs")
-        
-        add_custom_target(docs
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${DOXYGEN_OUT_DIR}
-            # Generate a default Doxyfile if one doesn't exist, then run it
-            COMMAND ${DOXYGEN_EXECUTABLE} -g "${DOXYGEN_OUT_DIR}/Doxyfile"
-            COMMAND ${DOXYGEN_EXECUTABLE} "${DOXYGEN_OUT_DIR}/Doxyfile"
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
+        set(DOXYGEN_GENERATE_LATEX NO)
+        set(DOXYGEN_RECURSIVE YES)
+ 
+        set(DOXYGEN_EXCLUDE_PATTERNS 
+            "*/Drivers/*" 
+            "*/cmake/*" 
+            "*/build/*"
+        )
+
+        set(DOC_INPUT 
+            "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
+            "${CMAKE_CURRENT_SOURCE_DIR}/App"
+        )
+
+        include(FindDoxygen)
+        doxygen_add_docs(docs
+            ${DOC_INPUT}
             COMMENT "Generating API documentation..."
-            VERBATIM
+        )
+
+        set(FINAL_DOCS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+        add_custom_command(TARGET docs POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${FINAL_DOCS_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_directory 
+                    ${CMAKE_CURRENT_BINARY_DIR}/html 
+                    ${FINAL_DOCS_DIR}/html
         )
     endif()
 endif()

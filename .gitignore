@@ -13,6 +13,7 @@ Debug/
 Release/
 bin/
 obj/
+docs/
 
 
 # CMake & Ninja Artifacts

@@ -18,6 +18,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake build-essential cppcheck
+        sudo apt-get install -y doxygen
 
     - name: Static Analysis (Cppcheck)
       run: |
