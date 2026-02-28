@@ -13,6 +13,7 @@ Debug/
 Release/
 bin/
 obj/
+docs/
 
 
 # CMake & Ninja Artifacts
@@ -55,3 +56,4 @@ bundles-lock.store.json
 # STM32CubeMX Specifics
 mx.scratch
 *.ioc.bak
+.clangd

@@ -1,11 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
 
-#
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
-#
-# User is free to modify the file as much as necessary
-#
 
 # Setup compiler settings
 set(CMAKE_C_STANDARD 11)
@@ -26,43 +20,99 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
-message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
-
-# Create an executable object type
-add_executable(${CMAKE_PROJECT_NAME})
-
-# Add STM32CubeMX generated sources
-add_subdirectory(cmake/stm32cubemx)
-
-# Link directories setup
-target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined library search paths
+# Shared Library (Used by BOTH)
+set(DRIVER_SOURCES
+    Lib/STS_Servo/Src/sts_protocol.c
+    Lib/STS_Servo/Src/sts_servo.c
 )
 
-# Add sources to executable
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user sources here
+# STM32 Only 
+set(FIRMWARE_SOURCES
+    Core/Src/main.c
+    Core/Src/stm32f4xx_it.c
+    Core/Src/system_stm32f4xx.c
 )
 
-# Add include paths
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+# PC Only 
+set(TEST_SOURCES
+    Tests/test_runner.c
+    Tests/test_sts_protocol.c
+    Tests/test_sts_utils.c
+    Tests/Unity/unity.c
 )
 
-# Add project symbols (macros)
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
-)
+# Detect if we are using the ARM Toolchain or Native (Windows)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_TARGET STREQUAL "arm-none-eabi")
+    set(IS_ARM_BUILD TRUE)
+    enable_language(C ASM)
+else()
+    set(IS_ARM_BUILD FALSE)
+    enable_language(C)
+endif()
 
-# Remove wrong libob.a library dependency when using cpp files
-list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# Add linked libraries
-target_link_libraries(${CMAKE_PROJECT_NAME}
-    stm32cubemx
 
-    # Add user defined libraries
-)
+if(IS_ARM_BUILD)
+    message("Configuring for STM32 (ARM)")
+    add_executable(${CMAKE_PROJECT_NAME} ${FIRMWARE_SOURCES} ${DRIVER_SOURCES})
+    add_subdirectory(cmake/stm32cubemx)
+    target_link_libraries(${CMAKE_PROJECT_NAME} stm32cubemx)
+    target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
+        Core/Inc
+        Lib/STS_Servo/Inc  
+        App/Inc
+    )
+else()
+    message("Configuring for Native (Windows/Host)")
+
+    enable_testing()
+
+    add_executable(test_runner ${TEST_SOURCES} ${DRIVER_SOURCES})
+    target_include_directories(test_runner PRIVATE 
+        Lib/STS_Servo/Inc
+        Tests           # Added: Allows test files to find utils.h easily
+        Tests/Unity
+        App/Inc
+    )
+
+    add_test(NAME ProtocolTests COMMAND test_runner)
+    find_package(Doxygen)
+
+   find_package(Doxygen)
+    if(DOXYGEN_FOUND)
+        set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
+        set(DOXYGEN_GENERATE_LATEX NO)
+        set(DOXYGEN_RECURSIVE YES)
+ 
+        set(DOXYGEN_EXCLUDE_PATTERNS 
+            "*/Drivers/*" 
+            "*/cmake/*" 
+            "*/build/*"
+        )
+
+        set(DOC_INPUT 
+            "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
+            "${CMAKE_CURRENT_SOURCE_DIR}/App"
+        )
+
+        include(FindDoxygen)
+        doxygen_add_docs(docs
+            ${DOC_INPUT}
+            COMMENT "Generating API documentation..."
+        )
+
+        set(FINAL_DOCS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/docs")
+        add_custom_command(TARGET docs POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${FINAL_DOCS_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_directory 
+                    ${CMAKE_CURRENT_BINARY_DIR}/html 
+                    ${FINAL_DOCS_DIR}/html
+        )
+    endif()
+endif()
+
+
+
+
+
