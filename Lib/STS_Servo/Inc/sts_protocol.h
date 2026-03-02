@@ -45,7 +45,8 @@
 #define STS_IDX_HEADER_2          1U
 #define STS_IDX_ID                2U
 #define STS_IDX_LENGTH            3U
-#define STS_IDX_INSTRUCTION       4U   /* Also used as Status byte in responses */
+#define STS_IDX_INSTRUCTION       4U 
+#define STS_IDX_STATUS            4U 
 #define STS_IDX_PARAM_START       5U
 
 /* --- Protocol Limits --- */
@@ -113,4 +114,3 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
  * @return sts_result_t STS_OK on success, or relevant error code.
  */
 sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len,  uint8_t* param_buf, uint16_t param_buf_size,uint16_t* param_len);
-
