@@ -4,23 +4,22 @@
  * @brief          : Unit Tests for STS Protocol Layer
  * @author         : Grisham Balloo
  * @date           : 2026-02-28
- * @version        : 1.2.0 
+ * @version        : 1.2.0
  ******************************************************************************
  * @details
- * This test suite provides  verification for the Feetech STS
+ * This test suite provides verification for the Feetech STS
  * Servo Protocol implementation. It utilises the Unity Test Framework to
  * validate the following functional areas:
  *
- * 1. Checksum Logic (7 tests): Mathematical verification of the  8-bit NOT-sum 
- * algorithm, handling of maximum sums, and null-pointer safety.
+ * 1. Checksum Logic (7 tests): Mathematical verification of the 8-bit NOT-sum
+ *    algorithm, handling of maximum sums, and null-pointer safety.
  * 2. Packet Serialisation (11 tests): Validation of command construction,
- * broadcast ID handling, and buffer boundary constraints.
- * 3. Parser Robustness (15 tests): Verification of error rejection for 
- * ID mismatches, hardware faults, and malformed length fields.
- * 4. Synchronication and Integration (5 tests):Stress-testing the 
- * sliding-window seeker against leading noise and false-header triggers 
- * to ensure recovery in real-world serial bus environments.
- *
+ *    broadcast ID handling, and buffer boundary constraints.
+ * 3. Parser Robustness (15 tests): Verification of error rejection for
+ *    ID mismatches, hardware faults, and malformed length fields.
+ * 4. Synchronization and Integration (5 tests): Stress-testing the
+ *    sliding-window seeker against leading noise and false-header triggers
+ *    to ensure recovery in real-world serial bus environments.
  *
  * @see Lib/STS_Servo/Inc/sts_protocol.h for the target API documentation.
  *
@@ -31,16 +30,24 @@
 #include "unity.h"
 #include "sts_protocol.h"
 #include <stdint.h>
-#include<string.h>
+#include <string.h>
 #include "test_sts_utils.h"
+#include "sts_registers.h"
 
+// Standard servo ID used across the majority of tests */
+#define TEST_ID_DEFAULT     0x01U
+
+// Minimum valid STS response fields for ID 0x01 with no parameters
+//  CS: ~(01 + 02 + 00) = ~0x03 = 0xFC */
+#define TEST_MIN_RESP_LEN  0x02U
+#define TEST_MIN_RESP_CS   0xFCU
 
 void setUp(void) {
-    
+
 }
 
 void tearDown(void) {
-    
+
 }
 
 /* =========================================================================
@@ -49,10 +56,11 @@ void tearDown(void) {
 
 void test_Checksum_Ping(void) {
     // 6 bytes total: {FF, FF, ID, LEN, INST, CHK_SLOT}
-    uint8_t packet[] = {0xFF, 0xFF, 0x01, 0x02, 0x01, 0x00}; 
+    // Sum = 01 + 02 + 01 = 0x04 -> ~0x04 = 0xFB
+    const uint8_t packet[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, STS_INST_PING, 0x00U};
+    uint8_t calculated = 0U;
 
-    uint8_t calculated = 0;
-    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    sts_result_t res = sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated);
 
     TEST_ASSERT_EQUAL(STS_OK, res);
     TEST_ASSERT_EQUAL_HEX8(0xFB, calculated);
@@ -63,49 +71,56 @@ void test_Checksum_Maximum_Sum(void) {
     // Sum = 254 * 5 = 1270 (0x4F6)
     // Truncate to 8-bit = 0xF6
     // ~0xF6 = 0x09
-    uint8_t packet[] = {0xFF, 0xFF, 0xFE, 0xFE, 0xFE, 0xFE, 0xFE, 0x00};
-    uint8_t calculated = 0;
+    const uint8_t packet[] = {STS_HEADER, STS_HEADER, 0xFEU, 0xFEU, 0xFEU, 0xFEU, 0xFEU, 0x00U};
+    uint8_t calculated = 0U;
 
-    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    sts_result_t res = sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated);
 
     TEST_ASSERT_EQUAL(STS_OK, res);
-    TEST_ASSERT_EQUAL_HEX8(0x09, calculated);
+    TEST_ASSERT_EQUAL_HEX8(0x09U, calculated);
 }
 
 void test_Checksum_Min_Length_Alternative_ID(void) {
     // ID: 0x0A (10), Len: 2, Instr: 1 (Ping)
     // Sum = 10 + 2 + 1 = 13 (0x0D)
     // ~0x0D = 0xF2
-    uint8_t packet[] = {0xFF, 0xFF, 0x0A, 0x02, 0x01, 0x00};
-    uint8_t calculated = 0;
+    const uint8_t packet[] = {STS_HEADER, STS_HEADER, 0x0AU, 0x02U, STS_INST_PING, 0x00U};
+    uint8_t calculated = 0U;
 
-    sts_result_t res = sts_calculate_checksum(packet, sizeof(packet), &calculated);
+    sts_result_t res = sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated);
+
     TEST_ASSERT_EQUAL(STS_OK, res);
-    TEST_ASSERT_EQUAL_HEX8(0xF2, calculated);
+    TEST_ASSERT_EQUAL_HEX8(0xF2U, calculated);
 }
 
 void test_Checksum_Null_Pointer(void) {
-  uint8_t calculated = 0;
-    
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10, &calculated));
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10, NULL));
+    uint8_t calculated = 0U;
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10U, &calculated));
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_calculate_checksum(NULL, 10U, NULL));
 }
 
 void test_Checksum_Too_Short(void) {
-    // Any packet under 6 bytes is invalid protocol-wise
-    uint8_t packet[] = {0xFF, 0xFF, 0x01};
-    uint8_t calculated = 0;
+    // Any packet under STS_MIN_PACKET_SIZE bytes is invalid protocol-wise
+    uint8_t packet[STS_MIN_PACKET_SIZE - 1U] = {0U};
+    packet[0] = STS_HEADER;
+    packet[1] = STS_HEADER;
+    packet[2] = TEST_ID_DEFAULT;
 
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, sts_calculate_checksum(packet, sizeof(packet), &calculated));
+    uint8_t calculated = 0U;
+
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN,
+        sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated));
 }
 
 void test_Checksum_Ignores_Headers_And_Final_Byte(void) {
-    // Sum should only care about: ID(1) + Len(2) + Instr(1) = 4
-    uint8_t packet[] = {0xAA, 0xAA, 0x01, 0x02, 0x01, 0x55};
-    uint8_t calculated = 0;
+    // Sum should only cover: ID(1) + Len(2) + Instr(1) = 4
+    // Corrupt headers (0xAA) and checksum slot (0x55) must not affect the result
+    const uint8_t packet[] = {0xAAU, 0xAAU, TEST_ID_DEFAULT, 0x02U, STS_INST_PING, 0x55U};
+    uint8_t calculated = 0U;
 
-    sts_calculate_checksum(packet, sizeof(packet), &calculated);
-    TEST_ASSERT_EQUAL_HEX8(0xFB, calculated);
+    sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated);
+    TEST_ASSERT_EQUAL_HEX8(0xFBU, calculated);
 }
 
 void test_Checksum_SumExactly256(void) {
@@ -113,123 +128,139 @@ void test_Checksum_SumExactly256(void) {
     // Sum = 128 + 126 + 2 = 256 (0x100)
     // Truncate to 8-bit = 0x00
     // ~0x00 = 0xFF
-    uint8_t packet[] = {0xFF, 0xFF, 0x80, 0x7E, 0x02, 0x00};
-    uint8_t calculated = 0;
+    const uint8_t packet[] = {STS_HEADER, STS_HEADER, 0x80U, 0x7EU, 0x02U, 0x00U};
+    uint8_t calculated = 0U;
 
-
-    sts_calculate_checksum(packet, sizeof(packet), &calculated);
-    TEST_ASSERT_EQUAL_HEX8(0xFF, calculated);
+    sts_calculate_checksum(packet, (uint16_t)sizeof(packet), &calculated);
+    TEST_ASSERT_EQUAL_HEX8(0xFFU, calculated);
 }
 
 /* =========================================================================
     PACKET CREATION TESTS
    ========================================================================= */
 
-
 void test_CreatePacket_Ping_Success(void) {
-    uint8_t buffer[STS_MIN_PACKET_SIZE]; 
-    uint8_t id = 0x01;
-    uint8_t instruction = 0x01; // ping command
+    uint8_t buffer[STS_MIN_PACKET_SIZE] = {0U};
 
-    sts_result_t result = sts_create_packet(id, instruction, NULL, 0, buffer, sizeof(buffer));
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_PING, NULL, 0U, buffer, sizeof(buffer));
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    // Packet should be: FF FF 01 02 01 FB
-    TEST_ASSERT_EQUAL_HEX8(0xFF, buffer[0]);
-    TEST_ASSERT_EQUAL_HEX8(0xFF, buffer[1]);
-    TEST_ASSERT_EQUAL_HEX8(id,   buffer[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x02, buffer[3]); 
-    TEST_ASSERT_EQUAL_HEX8(instruction, buffer[4]);
-    TEST_ASSERT_EQUAL_HEX8(0xFB, buffer[5]); 
+    // Expected packet: FF FF 01 02 01 FB
+    TEST_ASSERT_EQUAL_HEX8(STS_HEADER,     buffer[STS_IDX_HEADER_1]);
+    TEST_ASSERT_EQUAL_HEX8(STS_HEADER,     buffer[STS_IDX_HEADER_2]);
+    TEST_ASSERT_EQUAL_HEX8(TEST_ID_DEFAULT, buffer[STS_IDX_ID]);
+    TEST_ASSERT_EQUAL_HEX8(0x02U,            buffer[STS_IDX_LENGTH]);
+    TEST_ASSERT_EQUAL_HEX8(STS_INST_PING,     buffer[STS_IDX_INSTRUCTION]);
+    TEST_ASSERT_EQUAL_HEX8(0xFBU,            buffer[STS_MIN_PACKET_SIZE - 1U]);
 }
 
 void test_CreatePacket_BufferTooSmall(void) {
-    uint8_t buffer[5]; 
+    uint8_t buffer[STS_MIN_PACKET_SIZE - 1U] = {0U};
 
-    sts_result_t result = sts_create_packet(0x01, 0x01, NULL, 0, buffer, sizeof(buffer));
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_PING, NULL, 0U, buffer, sizeof(buffer));
 
     TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
 }
 
 void test_CreatePacket_NullBuffer(void) {
-    sts_result_t result = sts_create_packet(0x01, 0x01, NULL, 0, NULL, 10);
+    sts_result_t result = sts_create_packet(TEST_ID_DEFAULT, STS_INST_PING, NULL, 0U, NULL, 10U);
 
     TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
 }
 
 void test_CreatePacket_WritePosition_Success(void) {
-    uint8_t buffer[15];
-    //  ID 1, Write (0x03), Params: {0x1E, 0x00, 0x01} 
-    uint8_t params[] = {0x1E, 0x00, 0x01}; 
-    uint8_t p_len = sizeof(params);
-    
-    sts_result_t result = sts_create_packet(0x01, 0x03, params, p_len, buffer, sizeof(buffer));
+    uint8_t buffer[15] = {0U};
+    // ID 1, Write (0x03), Params: {0x1E, 0x00, 0x01}
+    const uint8_t params[] = {0x1EU, 0x00U, 0x01U};
+    uint16_t p_len = (uint16_t)sizeof(params);
+
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_WRITE, params, p_len, buffer, sizeof(buffer));
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL_HEX8(0x05, buffer[3]); // Length should be 3 (params) + 2 = 5
-    TEST_ASSERT_EQUAL_HEX8(0x1E, buffer[5]); // First parameter 
-    TEST_ASSERT_EQUAL_HEX8(0x01, buffer[7]); // Last parameter 
+    TEST_ASSERT_EQUAL_HEX8(0x05U, buffer[STS_IDX_LENGTH]);      // 3 params + 2 overhead = 5
+    TEST_ASSERT_EQUAL_HEX8(0x1EU, buffer[STS_IDX_PARAM_START]); // First parameter
 
-    // Checksum for: ID(01) + Len(05) + Instr(03) + P1(1E) + P2(00) + P3(01) = 0x27
+    // Checksum: ID(01) + Len(05) + Instr(03) + P1(1E) + P2(00) + P3(01) = 0x27
     // ~0x27 = 0xD7
-    TEST_ASSERT_EQUAL_HEX8(0xD7, buffer[5 + p_len]); 
+    TEST_ASSERT_EQUAL_HEX8(0xD7U, buffer[STS_IDX_PARAM_START + p_len]);
 }
 
 void test_CreatePacket_MaxPayload(void) {
-uint8_t buffer[260]; 
-    uint8_t params[253]; 
-    memset(params, 0x00, 253); 
-    // total_packet_size = 6 + 253 = 259 bytes
-    sts_result_t result = sts_create_packet(0x01, 0x03, params, 253, buffer, 260);
+    // total_packet_size = STS_MIN_PACKET_SIZE + STS_MAX_PARAM_LEN
+    uint8_t buffer[STS_MIN_PACKET_SIZE + STS_MAX_PARAM_LEN] = {0U};
+    uint8_t params[STS_MAX_PARAM_LEN] = {0U};
+    memset(params, 0x00U, STS_MAX_PARAM_LEN);
+
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_WRITE, params, (uint16_t)STS_MAX_PARAM_LEN,
+        buffer, (uint16_t)sizeof(buffer));
+
     TEST_ASSERT_EQUAL(STS_OK, result);
-    // Max possible length byte: 253 + 2 = 255 (0xFF)
-    TEST_ASSERT_EQUAL_HEX8(0xFF, buffer[3]);
-    // ~(0x01 + 0xFF + 0x03 + 0x00) = ~0x103 -> ~0x03 = 0xFC
-    TEST_ASSERT_EQUAL_HEX8(0xFC, buffer[258]);
+    // Max length byte: STS_MAX_PARAM_LEN + STS_LENGTH_FIXED_OVERHEAD = 0xFF
+    TEST_ASSERT_EQUAL_HEX8(0xFFU, buffer[STS_IDX_LENGTH]);
+    // ~(0x01 + 0xFF + 0x03 + 0x00 * 253) = ~0x03 = 0xFC
+    TEST_ASSERT_EQUAL_HEX8(0xFCU, buffer[sizeof(buffer) - 1U]);
 }
 
 void test_CreatePacket_BroadcastID(void) {
-    uint8_t buffer[STS_MIN_PACKET_SIZE];
-    // 0xFE is the Broadcast ID 
-    sts_result_t result = sts_create_packet(0xFE, 0x01, NULL, 0, buffer, sizeof(buffer));
+    uint8_t buffer[STS_MIN_PACKET_SIZE] = {0U};
+    // 0xFE is the Broadcast ID — must be accepted and written correctly
+    sts_result_t result = sts_create_packet(0xFEU, STS_INST_PING, NULL, 0U, buffer, sizeof(buffer));
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL_HEX8(0xFE, buffer[2]);
+    TEST_ASSERT_EQUAL_HEX8(0xFEU, buffer[STS_IDX_ID]);
 }
 
 void test_CreatePacket_InvalidIDRange(void) {
-    uint8_t buffer[10];
-    // ID 0xFF is  reserved 
-    sts_result_t result = sts_create_packet(0xFF, 0x01, NULL, 0, buffer, 10);
+    uint8_t buffer[10]= {0U};
+    // ID 0xFF is reserved — must be rejected
+    sts_result_t result = sts_create_packet(0xFFU, STS_INST_PING, NULL, 0U, buffer, sizeof(buffer));
     TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, result);
 }
 
 void test_CreatePacket_EmptyParamsIgnorePointer(void) {
-    uint8_t buffer[STS_MIN_PACKET_SIZE];
-    uint8_t dummy_val = 0xAA;
+    /* Buffer is written completely by the API; zeroing keeps static analyzers happy */
+    uint8_t buffer[STS_MIN_PACKET_SIZE] = {0U};
+    uint8_t dummy_val = 0xAAU;
 
-    sts_result_t result = sts_create_packet(0x01, 0x01, &dummy_val, 0, buffer, sizeof(buffer));
+    // Non-null pointer with zero length — pointer must be ignored
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_PING, &dummy_val, 0U, buffer, sizeof(buffer));
+
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL_HEX8(0x02, buffer[3]); 
+    TEST_ASSERT_EQUAL_HEX8(0x02U, buffer[STS_IDX_LENGTH]); // Length reflects zero parameters
 }
+
 void test_CreatePacket_BufferExactlyOneByteTooSmall(void) {
-    uint8_t buffer[10];
-    uint8_t params[5]; // Total size needed: 6 + 5 = 11
-    sts_result_t result = sts_create_packet(0x01, 0x03, params, 5, buffer, 10);
+    // Total needed: STS_MIN_PACKET_SIZE + 5 = 11, buffer is 10
+    uint8_t buffer[STS_MIN_PACKET_SIZE + 4U] = {0U};
+    uint8_t params[5]= {0U};
+
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_WRITE, params, 5U, buffer, sizeof(buffer));
+
     TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
 }
 
 void test_CreatePacket_NullParamsWithNonZeroLength(void) {
-    uint8_t buffer[20];
-    // p_len is 5, but pointer is NULL. 
-    sts_result_t result = sts_create_packet(0x01, 0x03, NULL, 5, buffer, 20);
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result); 
+    uint8_t buffer[20] = {0U};
+    // NULL pointer with non-zero length — must be rejected
+    sts_result_t result = sts_create_packet(TEST_ID_DEFAULT, STS_INST_WRITE, NULL, 5U, buffer, sizeof(buffer));
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
 }
 
 void test_CreatePacket_ParamLimitOverflow(void) {
-    uint8_t buffer[300];
-    uint8_t params[254]; // 254 + 2 = 256, which rolls over to 0 in uint8_t
-    sts_result_t result = sts_create_packet(0x01, 0x03, params, 254, buffer, 300);
+    uint8_t buffer[300] =  {0U};
+    // STS_MAX_PARAM_LEN + 1 overflows the protocol length byte
+    uint8_t params[STS_MAX_PARAM_LEN + 1U] = {0U};
+
+    sts_result_t result = sts_create_packet(
+        TEST_ID_DEFAULT, STS_INST_WRITE, params, (uint16_t)(STS_MAX_PARAM_LEN + 1U),
+        buffer, (uint16_t)sizeof(buffer));
+
     TEST_ASSERT_EQUAL(STS_ERR_INVALID_LEN, result);
 }
 
@@ -238,281 +269,372 @@ void test_CreatePacket_ParamLimitOverflow(void) {
    ========================================================================= */
 
 void test_ParseResponse_ValidPosition(void) {
-    // Packet: FF FF | ID:01 | Len:04 | Status:00 | Data:0A 05 | CS:EA
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x04, 0x00, 0x0A, 0x05, 0xEB};
-    uint8_t out_data[10];
+    /* RESPONSE STRUCTURE (Servo -> STM32):
+     * [ 0  1 ]  [ 2 ]  [ 3 ]  [ 4 ]               [ 5  6 ]  [ 7 ]
+     * [ H1 H2]  [ID ]  [LEN]  [STA]                [ P1 P2]  [CS ]
+     * [ FF FF ] [ 01 ] [ 04 ] [ 00 ]               [ 0A 05]  [ EB ]
+     *                          ^ Status 0x00 = OK | Params: 0x0A, 0x05
+     */
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x04U, 0x00U, 0x0AU, 0x05U, 0xEBU};
+    uint8_t out_data[10] =  {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL(2, out_len);
-    TEST_ASSERT_EQUAL_HEX8(0x0A, out_data[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x05, out_data[1]);
+    TEST_ASSERT_EQUAL_UINT16(2U, out_len);
+    TEST_ASSERT_EQUAL_HEX8(0x0AU, out_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x05U, out_data[1]);
 }
 
 void test_ParseResponse_HardwareError(void) {
-    // Status byte (index 4) = 0x04 (Overheat)
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x04, 0xF8}; 
-    uint8_t out_data[10];
+    // Status byte = 0x04 (Overheat bit set)
+    // CS: ~(01 + 02 + 04) = ~0x07 = 0xF8
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x04U, 0xF8U};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
 }
 
 void test_ParseResponse_IDMismatch(void) {
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC};
-    uint8_t out_data[10];
+    const uint8_t INCORRECT_ID = TEST_ID_DEFAULT;
+    const uint8_t TARGET_ID    = 0x02U;
+    // Packet belongs to ID 0x01, but we request ID 0x02
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, INCORRECT_ID, 0x02U, 0x00U, 0xFCU};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    // We expect ID 0x02, but packet has ID 0x01
-    sts_result_t result = sts_parse_response(0x02, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TARGET_ID, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_ID_MISMATCH, result);
 }
 
 void test_ParseResponse_ChecksumError(void) {
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x00, 0x00}; // Forced bad CS
-    uint8_t out_data[10];
+    // Valid structure but checksum byte forced to 0x00 — must be rejected
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x00U, 0x00U};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_CHECKSUM, result);
 }
 
 void test_ParseResponse_MinimumLength(void) {
-    // ID:01, Len:02, Status:00, CS:FC (~0x03)
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC};
-    uint8_t out_data[10];
+    // Minimum valid response — status byte only, no parameters
+    // CS: ~(01 + 02 + 00) = ~0x03 = 0xFC
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL(0, out_len); // Should be 0 parameters
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len); // No parameters in minimum packet
 }
 
 void test_ParseResponse_LengthMismatch(void) {
-    // Claimed Len: 04, but only 7 bytes total (should be 8)
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x04, 0x00, 0x0A, 0x05}; 
-    uint8_t out_data[10];
+    // Len field claims 4 (8 bytes total), but only 7 bytes provided
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x04U, 0x00U, 0x0AU, 0x05U};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_MALFORMED, result);
 }
 
 void test_ParseResponse_NullGuards(void) {
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFD};
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
     uint16_t out_len;
-    
-    // Test null output data buffer
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_parse_response(0x01, rx, 6, NULL, sizeof(rx), &out_len));
-    // Test null rx buffer
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, sts_parse_response(0x01, NULL, 6, rx, sizeof(rx), &out_len));
+
+    // Null output data buffer
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR,
+        sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
+                           NULL, (uint16_t)sizeof(rx), &out_len));
+    // Null rx buffer
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR,
+        sts_parse_response(TEST_ID_DEFAULT, NULL, (uint16_t)STS_MIN_PACKET_SIZE,
+                           rx, (uint16_t)sizeof(rx), &out_len));
 }
 
 void test_ParseResponse_OverloadError(void) {
-    // Status Byte = 0x08 (Overload Error bit set)
-    // CS: ~ (01 + 02 + 08) = ~0x0B = 0xF4
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x02, 0x08, 0xF4};
-    uint8_t out_data[10];
+    // Status byte = 0x08 (Overload error bit set)
+    // CS: ~(01 + 02 + 08) = ~0x0B = 0xF4
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x08U, 0xF4U};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
 }
 
 void test_ParseResponse_HeaderError_FirstByte(void) {
-    uint8_t rx[] = {0x00, 0xFF, 0x01, 0x02, 0x00, 0xFC}; // 0x00 instead of 0xFF
-    uint8_t out_data[10];
+    // First header byte corrupt (0x00 instead of 0xFF)
+    uint8_t rx[] = {0x00U, 0xFFU, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    TEST_ASSERT_EQUAL(STS_ERR_HEADER, sts_parse_response(0x01, rx, 6, out_data,sizeof(out_data), &out_len));
+    TEST_ASSERT_EQUAL(STS_ERR_HEADER,
+        sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
+                           out_data, (uint16_t)sizeof(out_data), &out_len));
 }
 
 void test_ParseResponse_HeaderError_SecondByte(void) {
-    // First header byte is correct, but second is 0x00 instead of 0xFF
-    uint8_t rx[] = {0xFF, 0x00, 0x01, 0x02, 0x00, 0xFC}; // 0x00 instead of 0xFF
-    uint8_t out_data[10];
+    // Second header byte corrupt (0x00 instead of 0xFF)
+    uint8_t rx[] = {0xFFU, 0x00U, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    TEST_ASSERT_EQUAL(STS_ERR_HEADER, sts_parse_response(0x01, rx, 6, out_data,sizeof(out_data), &out_len));
+    TEST_ASSERT_EQUAL(STS_ERR_HEADER,
+        sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
+                           out_data, (uint16_t)sizeof(out_data), &out_len));
 }
 
 void test_ParseResponse_IncompletePacket(void) {
-    // Len byte claims 4, but we only provide 7 bytes total (should be 8 for a valid packet)
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x04, 0x00, 0x0A, 0x05, 0xEB}; 
-    uint8_t out_data[10];
+    // Complete packet is 8 bytes — passing 7 simulates a truncated UART buffer
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x04U, 0x00U, 0x0AU, 0x05U, 0xEBU};
+    uint8_t out_data[10] = {0U};
     uint16_t out_len;
 
-    // Passing sizeof(rx) - 1 simulates a truncated UART buffer
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx) - 1, out_data,sizeof(out_data), &out_len);
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)(sizeof(rx) - 1U), out_data, (uint16_t)sizeof(out_data), &out_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_MALFORMED, result);
 }
 
 void test_ParseResponse_MaxPayload(void) {
-    // This test creates a response with the maximum allowed parameter length (253 bytes) and checks that it is parsed correctly.
-    uint8_t rx[259]; // Max size
-    rx[0] = 0xFF; rx[1] = 0xFF; rx[2] = 0x01;
-    rx[3] = 255;  // protocol_len
-    rx[4] = 0x00;  // Status
-    memset(&rx[5], 0xAA, 253); 
+    // Maximum response: STS_MIN_PACKET_SIZE + STS_MAX_PARAM_LEN bytes total
+    const uint16_t max_pkt_len = (uint16_t)(STS_MIN_PACKET_SIZE + STS_MAX_PARAM_LEN);
+    uint8_t rx[STS_MIN_PACKET_SIZE + STS_MAX_PARAM_LEN] = {0U};
+    
+    rx[STS_IDX_HEADER_1]    = STS_HEADER;
+    rx[STS_IDX_HEADER_2]    = STS_HEADER;
+    rx[STS_IDX_ID]          = TEST_ID_DEFAULT;
+    rx[STS_IDX_LENGTH]      = (uint8_t)(STS_MAX_PARAM_LEN + STS_LENGTH_FIXED_OVERHEAD); // 0xFF
+    rx[STS_IDX_STATUS ]     = STS_HARDWARE_OK;
+    memset(&rx[STS_IDX_PARAM_START], 0xAAU, STS_MAX_PARAM_LEN);
 
-    uint8_t checksum= 0;
-    sts_result_t crc_res = sts_calculate_checksum(rx, sizeof(rx), &checksum);
-    TEST_ASSERT_EQUAL(STS_OK, crc_res); // Ensure the test setup itself is valid
-    rx[258] = checksum;
+    uint8_t checksum = 0U;
+    sts_result_t crc_res = sts_calculate_checksum(rx, max_pkt_len, &checksum);
+    TEST_ASSERT_EQUAL(STS_OK, crc_res);
+    rx[max_pkt_len - 1U] = checksum;
 
-    uint8_t param_buf[255];
-    uint16_t param_len;
-    sts_result_t result = sts_parse_response(0x01, rx, 259, param_buf,sizeof(param_buf), &param_len);
+    /* output buffer is zeroed before use for clarity */
+    uint8_t param_buf[STS_MAX_PARAM_LEN] = {0U};
+    uint16_t param_len = 0U;
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, max_pkt_len, param_buf, (uint16_t)sizeof(param_buf), &param_len);
 
     TEST_ASSERT_EQUAL(STS_OK, result);
-    TEST_ASSERT_EQUAL(253, param_len);
-    TEST_ASSERT_EQUAL_HEX8(0xAA, param_buf[252]); // Check the last byte
+    TEST_ASSERT_EQUAL_UINT16((uint16_t)STS_MAX_PARAM_LEN, param_len);
+    TEST_ASSERT_EQUAL_HEX8(0xAAU, param_buf[STS_MAX_PARAM_LEN - 1U]); // Verify last byte
 }
 
 void test_ParseResponse_BoundaryIDs(void) {
-    // This test checks that we can correctly parse responses from the lowest valid ID (0x00) and the broadcast ID (0xFE).
-    uint8_t param_buf[10];
-    uint16_t param_len;
-    
-    // Test ID 0x00 (Valid)
-    uint8_t rx_min[] = {0xFF, 0xFF, 0x00, 0x02, 0x00, 0xFD};
-    TEST_ASSERT_EQUAL(STS_OK, sts_parse_response(0x00, rx_min, 6, param_buf,sizeof(param_buf), &param_len));
+    uint8_t param_buf[10] = {0U};
+    int16_t param_len = 0U;
 
-    // Test ID 0xFE (Broadcast/Valid)
-    uint8_t rx_max[] = {0xFF, 0xFF, 0xFE, 0x02, 0x00, 0xFF};
-    TEST_ASSERT_EQUAL(STS_OK, sts_parse_response(0xFE, rx_max, 6, param_buf,sizeof(param_buf), &param_len));
+    // ID 0x00 — lowest valid ID
+    // CS: ~(00 + 02 + 00) = ~0x02 = 0xFD
+    const uint8_t rx_min[] = {STS_HEADER, STS_HEADER, 0x00U, TEST_MIN_RESP_LEN, 0x00U, 0xFDU};
+    TEST_ASSERT_EQUAL(STS_OK,
+        sts_parse_response(0x00U, rx_min, (uint16_t)STS_MIN_PACKET_SIZE,
+                           param_buf, (uint16_t)sizeof(param_buf), &param_len));
+
+    // ID 0xFE — broadcast ID, highest valid
+    // CS: ~(FE + 02 + 00) = ~0x100 -> ~0x00 = 0xFF
+    const uint8_t rx_max[] = {STS_HEADER, STS_HEADER, 0xFEU, TEST_MIN_RESP_LEN, 0x00U, 0xFFU};
+    TEST_ASSERT_EQUAL(STS_OK,
+        sts_parse_response(0xFEU, rx_max, (uint16_t)STS_MIN_PACKET_SIZE,
+                           param_buf, (uint16_t)sizeof(param_buf), &param_len));
 }
 
 void test_ParseResponse_OutputBufferSafety(void) {
-    // This test ensures that if the parameter buffer is too small, we get an error and don't write out of bounds.
-    // Packet: Headers(2), ID(1), Len(12), Status(1), Data(10), Checksum(1) = 16 bytes total
-    // protocol_len (rx[3]) is 12 (Status + 10 Data + Checksum)
-    uint8_t rx[] = {0xFF, 0xFF, 0x01, 0x0C, 0x00, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0x00};
+    // Packet with 10 parameter bytes — output buffer only 2 bytes, must reject safely
+    // protocol_len = Status(1) + Data(10) + Checksum(1) = 12 (0x0C)
+    uint8_t rx[] = {
+        STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x0CU, 0x00U,
+        0x01U, 0x02U, 0x03U, 0x04U, 0x05U, 0x06U, 0x07U, 0x08U, 0x09U, 0x0AU,
+        0x00U
+    };
 
-    uint8_t checksum = 0;
-    sts_result_t crc_res = sts_calculate_checksum(rx, sizeof(rx), &checksum);
+    uint8_t checksum = 0U;
+    sts_result_t crc_res = sts_calculate_checksum(rx, (uint16_t)sizeof(rx), &checksum);
     TEST_ASSERT_EQUAL(STS_OK, crc_res);
-    rx[15] = checksum;
-    
-    uint8_t small_param_buf[2]; // Target buffer is only 2 bytes
-    uint16_t param_len = 0;
+    rx[(uint16_t)sizeof(rx) - 1U] = checksum;
 
-    sts_result_t result = sts_parse_response(0x01, rx, sizeof(rx), small_param_buf, sizeof(small_param_buf), &param_len);
-    printf("\nDEBUG: Parse returned value %d\n", (int)result);
+    uint8_t small_param_buf[2] = {0xEEU, 0xEEU};
+    uint16_t param_len = 0U;
+
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), small_param_buf, (uint16_t)sizeof(small_param_buf), &param_len);
+
     TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
-    // Ensure param_len wasn't modified or at least didn't indicate success
-    TEST_ASSERT_EQUAL(0, param_len); 
+    TEST_ASSERT_EQUAL_UINT16(0U, param_len); // Must not be modified on failure
+
+    TEST_ASSERT_EQUAL_HEX8(0xEEU, small_param_buf[0]); 
+    TEST_ASSERT_EQUAL_HEX8(0xEEU, small_param_buf[1]);
 }
 
 void test_ParseResponse_JunkData(void) {
-    // Test with a buffer of all zeros and all 0xFFs to ensure we don't accidentally parse junk as valid packets.
-    uint8_t all_zeros[10] = {0};
-    uint8_t all_ones[10] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    uint8_t param_buf[10];
-    uint16_t param_len;
+    // All-zero and all-0xFF buffers must never parse as valid packets
+    const uint8_t all_zeros[10] = {0U};
+    const uint8_t all_ones[10]  = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU};
+    uint8_t param_buf[10] = {0U};
+    uint16_t param_len = 0U;
 
-    TEST_ASSERT_NOT_EQUAL(STS_OK, sts_parse_response(0x01, all_zeros, 10, param_buf,sizeof(param_buf), &param_len));
-    TEST_ASSERT_NOT_EQUAL(STS_OK, sts_parse_response(0x01, all_ones, 10, param_buf,sizeof(param_buf), &param_len));
+    TEST_ASSERT_NOT_EQUAL(STS_OK,
+        sts_parse_response(TEST_ID_DEFAULT, all_zeros, (uint16_t)sizeof(all_zeros),
+                           param_buf, (uint16_t)sizeof(param_buf), &param_len));
+    TEST_ASSERT_NOT_EQUAL(STS_OK,
+        sts_parse_response(TEST_ID_DEFAULT, all_ones, (uint16_t)sizeof(all_ones),
+                           param_buf, (uint16_t)sizeof(param_buf), &param_len));
 }
 
 /* =========================================================================
-     PROTOCOL SYNCHRONIZATION & INTEGRATION TESTS
+    PROTOCOL SYNCHRONIZATION & INTEGRATION TESTS
    ========================================================================= */
 
 void test_Protocol_Integration_Loopback(void) {
-    uint8_t pkt_buf[32];
-    uint8_t rx_param_buf[8];
-    uint16_t rx_param_len = 0;
-    
-    uint8_t id = 0x01;
-    uint8_t original_params[] = {0xAA, 0xBB}; 
+    const uint8_t original_params[] = {0xAAU, 0xBBU};
     uint16_t original_len = (uint16_t)sizeof(original_params);
 
-    /* Use the simulator helper to create a 'healthy' response packet (Status 0x00) */
-    simulate_servo_response(id, STS_HARDWARE_OK, original_params, original_len, pkt_buf);
-    
-    uint16_t total_len = (uint16_t)STS_MIN_PACKET_SIZE + original_len;
-    
-    sts_result_t parse_res = sts_parse_response(id, pkt_buf, total_len, 
-                                                rx_param_buf, (uint16_t)sizeof(rx_param_buf), &rx_param_len);
-  
-    TEST_ASSERT_EQUAL(STS_OK, parse_res);
-    TEST_ASSERT_EQUAL(original_len, rx_param_len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(original_params, rx_param_buf, original_len);
+    /* EXPECTED PACKET STRUCTURE:
+     * [ 0  1 ]  [ 2 ]  [ 3 ]  [ 4 ]  [ 5  6 ]  [ 7 ]
+     * [ H1 H2]  [ID ]  [LEN]  [STA]  [ P1 P2]  [CS ]
+     * [ FF FF ] [ 01 ] [ 04 ] [ 00 ] [ AA BB]  [ EB ]
+     */
+    /* smoke–test buffer for the loopback helper – zeroing is cheap */
+    uint8_t simulated_stream[STS_MIN_PACKET_SIZE + 2U] = {0U};
+    simulate_servo_response(TEST_ID_DEFAULT, STS_HARDWARE_OK,
+                            original_params, original_len, simulated_stream);
+
+    uint8_t parsed_payload[8] = {0U};
+    uint16_t parsed_len = 0U;
+
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, simulated_stream, (uint16_t)sizeof(simulated_stream),
+        parsed_payload, (uint16_t)sizeof(parsed_payload), &parsed_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT16(original_len, parsed_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(original_params, parsed_payload, original_len);
 }
 
 void test_Protocol_Integration_MultiByteRead(void) {
-    uint8_t pkt_buf[64];
-    uint8_t rx_data[16];
-    uint16_t rx_len = 0;
-    uint8_t sensor_data[] = {0x01, 0x02, 0x03, 0x04, 0x05};
-    uint16_t sensor_data_len = (uint16_t)sizeof(sensor_data);
-    uint8_t target_id = 10U;
+    const uint8_t SENSOR_ID = 10U;
 
-    /* Simulate the servo sending back multi-byte data */
-    simulate_servo_response(target_id, STS_HARDWARE_OK, sensor_data, sensor_data_len, pkt_buf);
+    /* Simulate reading 5 bytes of data (e.g., Position + Speed + Temperature)
+     *
+     * EXPECTED PACKET STRUCTURE:
+     * [ 0  1 ]  [ 2 ]  [ 3 ]  [ 4 ]  [ 5  6  7  8  9 ]  [ 10 ]
+     * [ H1 H2]  [ID ]  [LEN]  [STA]  [ P1 P2 P3 P4 P5]  [CS  ]
+     * [ FF FF ] [ 0A ] [ 07 ] [ 00 ] [ 01 02 03 04 05 ]  [ CS ]
+     * ^ LEN = Status(1) + Params(5) + CS(1) = 7
+     */
+    const uint8_t raw_sensor_values[] = {0x01U, 0x02U, 0x03U, 0x04U, 0x05U};
+    uint16_t sensor_data_len = (uint16_t)sizeof(raw_sensor_values);
 
-    uint16_t total_pkt_len = (uint16_t)STS_MIN_PACKET_SIZE + sensor_data_len;
+    uint8_t simulated_stream[STS_MIN_PACKET_SIZE + 5U] = {0U};
+    simulate_servo_response(SENSOR_ID, STS_HARDWARE_OK,
+                            raw_sensor_values, sensor_data_len, simulated_stream);
 
-    sts_result_t res = sts_parse_response(target_id, pkt_buf, total_pkt_len, 
-                                          rx_data, (uint16_t)sizeof(rx_data), &rx_len);
+    uint8_t parsed_payload[16] = {0U};
+    uint16_t parsed_len = 0U;
 
-    TEST_ASSERT_EQUAL(STS_OK, res); 
-    TEST_ASSERT_EQUAL(sensor_data_len, rx_len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(sensor_data, rx_data, sensor_data_len);
+    sts_result_t result = sts_parse_response(
+        SENSOR_ID, simulated_stream, (uint16_t)sizeof(simulated_stream),
+        parsed_payload, (uint16_t)sizeof(parsed_payload), &parsed_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT16(sensor_data_len, parsed_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(raw_sensor_values, parsed_payload, sensor_data_len);
 }
 
 void test_Protocol_Integration_Robustness_Seeker(void) {
-    // This test simulates a noisy UART buffer where the valid packet is preceded by random bytes. The seeker should skip the noise and correctly parse the valid packet.
-    uint8_t noisy_buffer[] = {0x00, 0xAA, 0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC};
-    uint8_t out_buf[2];
-    uint16_t out_len;
-   
-    sts_result_t res = sts_parse_response(1, noisy_buffer, 8, out_buf, sizeof(out_buf), &out_len);
+    /* Buffer Layout:
+     * [ 00 AA ] [ FF FF 01 02 00 FC ]
+     * | Noise | |--- Valid Packet --|
+     *             ^ Starts at index 2
+     */
+    const uint8_t noisy_bus_stream[] = {
+        0x00U, 0xAAU,
+        STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS
+    };
 
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(STS_OK, res, "Seeker failed to find packet in noisy buffer");
-    TEST_ASSERT_EQUAL(0, out_len); 
+    uint8_t extracted_payload[2] = {0U};
+    uint16_t extracted_len=0;
+
+    sts_result_t status = sts_parse_response(
+        TEST_ID_DEFAULT, noisy_bus_stream, (uint16_t)sizeof(noisy_bus_stream),
+        extracted_payload, (uint16_t)sizeof(extracted_payload), &extracted_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, status);
+    TEST_ASSERT_EQUAL_UINT16(0U, extracted_len); // Ping response carries no parameters
 }
 
 void test_Protocol_Integration_FalseHeaderRecovery(void) {
-    // This test simulates a scenario where there is a false header (0xFF 0xFF) in the noise before the actual valid packet. 
-    // The seeker should skip the false header and correctly parse the real packet.
-  
-    uint8_t tricky_buffer[] = { 
-        0x00, 0xFF, 0xFF, 0x01, 0xFF, // Junk with a fake header
-        0xFF, 0xFF, 0x01, 0x02, 0x00, 0xFC // The real valid packet
+    /* Buffer Layout:
+     * [ 00 FF FF 01 FF ] [ FF FF 01 02 00 FC ]
+     * |--- Junk Data ---| |--- Valid Packet --|
+     *  ^ Fake Header        ^ Real Header
+     */
+    const uint8_t noisy_bus_stream[] = {
+        0x00U, 0xFFU, 0xFFU, 0x01U, 0xFFU,
+        STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS
     };
-    uint8_t out_buf[2];
-    uint16_t out_len;
 
-    sts_result_t res = sts_parse_response(1, tricky_buffer, sizeof(tricky_buffer), out_buf, sizeof(out_buf), &out_len);
+    uint8_t extracted_payload[2] = {0U};
+    uint16_t extracted_len = 0U;
 
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(STS_OK, res, "Seeker failed to recover from a false header");
+    sts_result_t status = sts_parse_response(
+        TEST_ID_DEFAULT, noisy_bus_stream, (uint16_t)sizeof(noisy_bus_stream),
+        extracted_payload, (uint16_t)sizeof(extracted_payload), &extracted_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, status);
+    TEST_ASSERT_EQUAL_UINT16(0U, extracted_len);
 }
 
 void test_Protocol_Integration_Filters_Wrong_ID(void) {
-    /* Verifies that the seeker correctly skips a valid packet 
-     * meant for a different ID to find the one we requested.
+     const uint8_t SEARCH_TARGET_ID = TEST_ID_DEFAULT;
+     const uint8_t IGNORED_DECOY_ID = 0x05U;
+
+    /* Buffer Layout:
+     * [ 0  1  2  3  4  5 ] [ 6  7  8  9  10 11 12 13 ]
+     * |--- Decoy Pkt ----| |-----  Target Pkt   -----|
+     * [ FF FF 05 02 00 FD] [ FF FF 01 04 00 DE AD EB ]
+     *         ^ ID 5               ^ ID 1
      */
-    uint8_t buffer[64];
-    uint8_t out_param[8];
-    uint16_t out_len;
-    
-    /* Packet 1: ID 5 (Wrong ID) */
-    simulate_servo_response(5, STS_HARDWARE_OK, NULL, 0, &buffer[0]);
-    /* Packet 2: ID 1 (The target ID) */
-    uint8_t target_data[] = {0xDE, 0xAD};
-    simulate_servo_response(1, STS_HARDWARE_OK, target_data, 2, &buffer[6]);
+    uint8_t raw_uart_stream[2U * STS_MIN_PACKET_SIZE + 2U] = {0U};
+    uint8_t extracted_payload[8] = {0U};
+    uint16_t extracted_len = 0U;
 
-    sts_result_t res = sts_parse_response(1, buffer, 14, out_param, 8, &out_len);
+    // Decoy response — parser must skip this
+    simulate_servo_response(IGNORED_DECOY_ID, STS_HARDWARE_OK, NULL, 0U, &raw_uart_stream[0]);
 
-    TEST_ASSERT_EQUAL(STS_OK, res);
-    TEST_ASSERT_EQUAL(2, out_len);
-    TEST_ASSERT_EQUAL_HEX8(0xDE, out_param[0]);
-    TEST_ASSERT_EQUAL_HEX8(0xAD, out_param[1]);
+    // Target response — parser must return this
+    const uint8_t expected_payload[] = {0xDEU, 0xADU};
+    simulate_servo_response(SEARCH_TARGET_ID, STS_HARDWARE_OK, expected_payload, 2U,
+                            &raw_uart_stream[STS_MIN_PACKET_SIZE]);
+
+    sts_result_t result = sts_parse_response(
+        SEARCH_TARGET_ID, raw_uart_stream, (uint16_t)sizeof(raw_uart_stream),
+        extracted_payload, (uint16_t)sizeof(extracted_payload), &extracted_len);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT16(2U, extracted_len);
+    TEST_ASSERT_EQUAL_HEX8(0xDEU, extracted_payload[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xADU, extracted_payload[1]);
 }
