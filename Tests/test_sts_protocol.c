@@ -444,7 +444,7 @@ void test_ParseResponse_MaxPayload(void) {
 
 void test_ParseResponse_BoundaryIDs(void) {
     uint8_t param_buf[10] = {0U};
-    int16_t param_len = 0U;
+    uint16_t param_len = 0U;
 
     // ID 0x00 — lowest valid ID
     // CS: ~(00 + 02 + 00) = ~0x02 = 0xFD
