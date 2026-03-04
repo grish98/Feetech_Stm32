@@ -26,4 +26,13 @@ extern void test_STS_Bus_Init_Overwrites_Garbage(void);
 extern void test_STS_Bus_Init_Reinitialization(void);
 extern void test_STS_Bus_Interface_Execution(void);
 
-
+/* --- Servo Initialization Tests --- */
+extern void test_STS_Servo_Init_Success(void);
+extern void test_STS_Servo_Init_Null_Servo(void);
+extern void test_STS_Servo_Init_Null_Bus(void);
+extern void test_STS_Servo_Init_Invalid_ID(void);
+extern void test_STS_Servo_Init_ID_Boundaries(void);
+extern void test_STS_Servo_Init_Clears_Handle_State(void);
+extern void test_STS_Servo_Init_Atomic_Failure(void);
+extern void test_STS_Servo_Init_Reset_Online_Status(void);
+extern void test_STS_Servo_Init_Multi_Bus_Link(void);

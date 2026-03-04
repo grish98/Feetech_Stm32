@@ -32,5 +32,16 @@ int main(void) {
     RUN_TEST(test_STS_Bus_Init_Null_Port_Handle_Succeeds);
     RUN_TEST(test_STS_Bus_Init_Overwrites_Garbage);
 
+    printf("\n--- STS Servo Initialization Tests ---\n");
+    RUN_TEST(test_STS_Servo_Init_Success);
+    RUN_TEST(test_STS_Servo_Init_Null_Servo);
+    RUN_TEST(test_STS_Servo_Init_Null_Bus);
+    RUN_TEST(test_STS_Servo_Init_Invalid_ID);
+    RUN_TEST(test_STS_Servo_Init_ID_Boundaries);
+    RUN_TEST(test_STS_Servo_Init_Clears_Handle_State);
+    RUN_TEST(test_STS_Servo_Init_Atomic_Failure);
+    RUN_TEST(test_STS_Servo_Init_Reset_Online_Status);
+    RUN_TEST(test_STS_Servo_Init_Multi_Bus_Link);
+
     return UNITY_END();
 }

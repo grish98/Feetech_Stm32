@@ -16,6 +16,7 @@
  ******************************************************************************
  */
 #include "sts_servo.h"
+#include "sts_protocol.h"
 
 sts_result_t STS_Bus_Init(sts_bus_t *bus, void *port_handle, sts_hal_transmit_t tx_func, sts_hal_receive_t rx_func) {
     if (bus == NULL || tx_func == NULL || rx_func == NULL) {
@@ -25,6 +26,22 @@ sts_result_t STS_Bus_Init(sts_bus_t *bus, void *port_handle, sts_hal_transmit_t 
     bus->port_handle = port_handle;
     bus->transmit = tx_func;
     bus->receive = rx_func;
+
+    return STS_OK;
+}
+
+sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id) {
+    if (servo == NULL || bus == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+
+    if (id >= STS_MAX_ID ) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    servo->bus = bus;
+    servo->id = id;
+    servo->is_online = STS_OFFLINE; 
 
     return STS_OK;
 }
