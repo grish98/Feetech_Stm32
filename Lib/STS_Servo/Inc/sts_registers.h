@@ -24,6 +24,13 @@
 
 #pragma once
 
+/** * @name Protocol Special IDs
+ * @{ 
+ */
+#define STS_ID_BROADCAST_SYNC   0xFEU /**< 254: Broadcast to all servos (Execute immediately) */
+#define STS_ID_BROADCAST_ASYNC  0xFFU /**< 255: Broadcast to all servos (Wait for ACTION instruction) */
+/** @} */
+
 /** * @name Protocol Instructions
  * @{ 
  */
@@ -85,13 +92,19 @@
 /** * @name Hardware Error Bitmasks (Address 0x41)
  * @{ 
  */
+ #define STS_STATUS_OK        0x00U /**< No hardware errors */
 #define STS_BIT_ERR_VOLTAGE  (1 << 0) /**< Voltage outside safety limits */
 #define STS_BIT_ERR_TEMP     (1 << 1) /**< Internal temperature sensor fault */
 #define STS_BIT_ERR_OVERHEAT (1 << 2) /**< Over-temperature detected */
 #define STS_BIT_ERR_LOAD     (1 << 3) /**< Overload/Stall detected */
 /** @} */
 
-
+/** * @name Common State Values 
+ * @{ 
+ */
+#define STS_TORQUE_DISABLE  0x00U /**< Disable motor torque (free spin) */
+#define STS_TORQUE_ENABLE   0x01U /**< Enable motor torque (hold position) */
+/** @} */
 
 
 

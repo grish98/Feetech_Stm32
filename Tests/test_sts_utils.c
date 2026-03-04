@@ -30,12 +30,34 @@ sts_result_t mock_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
 }
 
 sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
-    (void)bus; 
-    (void)data; 
-    (void)len; 
+    if (bus == NULL || bus->port_handle == NULL) return STS_ERR_NULL_PTR; 
     (void)timeout_ms;
+    mock_uart_t *port = (mock_uart_t *)bus->port_handle;
     
+    if (port == NULL || data == NULL) return STS_ERR_NULL_PTR;
+
+    if (port->rx_len == 0U) return STS_ERR_TIMEOUT;
+
+    uint16_t actual_to_copy = (port->rx_len < len) ? port->rx_len : len;
+    memcpy(data, port->rx_buffer, actual_to_copy);
+
+    if (actual_to_copy < len) {
+        port->rx_len = 0; 
+        return STS_ERR_TIMEOUT; 
+    }
+
+    port->rx_len = 0;
     return STS_OK;
+}
+
+sts_result_t mock_tx_fail(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
+    (void)bus; (void)data; (void)len;
+    return STS_ERR_TX_FAIL;
+}
+
+sts_result_t mock_tx_busy(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
+    (void)bus; (void)data; (void)len;
+    return STS_ERR_BUSY;
 }
 
 void simulate_servo_response(uint8_t id, uint8_t status, const uint8_t* params, 

@@ -69,3 +69,28 @@ sts_result_t STS_Bus_Init(sts_bus_t *bus, void *port_handle, sts_hal_transmit_t 
  */
 sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id);
 
+
+
+/* ==========================================================================
+ * REGISTER ACCESS PRIMITIVES
+ * ========================================================================== */
+
+/**
+ * @brief Writes a single byte (8-bit) to a specific servo register.
+ */
+sts_result_t STS_Write8(sts_servo_t *servo, uint8_t reg_addr, uint8_t value);
+
+/**
+ * @brief Writes a word (16-bit) to a specific servo register (Little-Endian).
+ */
+sts_result_t STS_Write16(sts_servo_t *servo, uint8_t reg_addr, uint16_t value);
+
+/**
+ * @brief Reads a single byte (8-bit) from a specific servo register.
+ */
+sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out);
+
+/**
+ * @brief Reads a word (16-bit) from a specific servo register (Little-Endian).
+ */
+sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_out);

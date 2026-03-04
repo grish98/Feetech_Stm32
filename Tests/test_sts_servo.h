@@ -36,3 +36,18 @@ extern void test_STS_Servo_Init_Clears_Handle_State(void);
 extern void test_STS_Servo_Init_Atomic_Failure(void);
 extern void test_STS_Servo_Init_Reset_Online_Status(void);
 extern void test_STS_Servo_Init_Multi_Bus_Link(void);
+
+
+extern void test_STS_Write8_Success(void);
+extern void test_STS_Read8_Success(void);
+extern void test_STS_Write16_Success(void);
+extern void test_STS_Read16_Success(void);
+extern void test_STS_Primitives_All_Null_Guards(void);
+extern void test_STS_Primitives_All_Timeout(void);
+extern void test_STS_Primitives_All_Data_Integrity(void);
+extern void test_STS_Primitives_All_Hardware_Errors(void);
+extern void test_STS_ExecuteCommand_Header_Corruption(void);
+extern void test_STS_ExecuteCommand_Length_Mismatch(void);
+extern void test_STS_ExecuteCommand_Buffer_Overflow(void);
+extern void test_STS_ExecuteCommand_Truncated_Packet(void);
+extern void test_STS_Primitives_Read_Broadcast_Forbidden(void);

@@ -43,5 +43,21 @@ int main(void) {
     RUN_TEST(test_STS_Servo_Init_Reset_Online_Status);
     RUN_TEST(test_STS_Servo_Init_Multi_Bus_Link);
 
+    printf("\n--- STS Servo Read/Write Tests ---\n");
+    RUN_TEST(test_STS_Write8_Success);
+    RUN_TEST(test_STS_Read8_Success);
+    RUN_TEST(test_STS_Write16_Success);
+    RUN_TEST(test_STS_Read16_Success);
+    RUN_TEST(test_STS_Primitives_All_Null_Guards);
+    RUN_TEST(test_STS_Primitives_All_Timeout);
+    RUN_TEST(test_STS_Primitives_All_Data_Integrity);
+    RUN_TEST(test_STS_Primitives_All_Hardware_Errors);
+    RUN_TEST(test_STS_ExecuteCommand_Header_Corruption);
+    RUN_TEST(test_STS_ExecuteCommand_Length_Mismatch);
+    RUN_TEST(test_STS_ExecuteCommand_Buffer_Overflow);
+    RUN_TEST(test_STS_ExecuteCommand_Truncated_Packet);
+    RUN_TEST(test_STS_Primitives_Read_Broadcast_Forbidden);
+    
+
     return UNITY_END();
 }

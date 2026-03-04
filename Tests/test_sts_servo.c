@@ -19,24 +19,60 @@
 
 #include "unity.h"
 #include "sts_servo.h"
+#include "sts_protocol.h"
+#include "sts_registers.h"
 #include "test_sts_utils.h"
+#include <string.h>
 
 #define TEST_DATA_BYTE    0xAAU
 #define TEST_DATA_LEN     1U
 #define TEST_TIMEOUT_MS   100U
 
-#define TEST_VALID_ID           10U
+#define TEST_VALID_ID          10U
 #define TEST_ALT_ID            20U
 #define TEST_MIN_ID             0U
 #define TEST_MAX_ID             253U
-#define TEST_ID_BROADCAST       255U
-#define TEST_ID_RESERVED        254U
+
 
 #define MOCK_BUS_ADDR_A         ((void*)0x1111)
 #define MOCK_BUS_ADDR_B         ((void*)0x2222)
 
-void setUp(void) {
+#define HW_STATUS_OK                 0x00U
 
+#define EXPECTED_WRITE_ACK_LEN       6U
+#define EXPECTED_READ8_ACK_LEN       7U
+#define EXPECTED_READ16_ACK_LEN      8U
+
+#define PAYLOAD_LEN_NONE             0U
+#define PAYLOAD_LEN_1_BYTE           1U
+#define PAYLOAD_LEN_2_BYTES          2U
+
+#define TEST_VAL_8BIT                0x7FU
+#define TEST_VAL_16BIT               0x1234U
+#define TEST_VAL_16BIT_LOW           0x34U
+#define TEST_VAL_16BIT_HIGH          0x12U
+
+#define IDX_HEADER_START             0U
+#define IDX_LENGTH_BYTE              3U
+#define IDX_CHECKSUM_16BIT_READ      7U
+
+#define CORRUPT_HEADER_BYTE          0xEEU
+#define CORRUPT_CHECKSUM_MASK        0xFFU
+#define FAKE_LONG_PACKET_LENGTH      10U
+#define TRUNCATED_PACKET_LENGTH      2U
+
+static sts_bus_t test_bus;
+static sts_servo_t test_servo; 
+
+void setUp(void) {
+    /* 1. Completely wipe the globals to prevent state leakage */
+    memset(&test_bus, 0, sizeof(test_bus));
+    memset(&test_servo, 0, sizeof(test_servo));
+    memset(&dummy_uart_port, 0, sizeof(dummy_uart_port));
+
+    /* 2. Re-initialize from a clean slate */
+    (void)STS_Bus_Init(&test_bus, &dummy_uart_port, mock_tx, mock_rx);
+    (void)STS_Servo_Init(&test_servo, &test_bus, TEST_VALID_ID);
 }
 void tearDown(void) {
 
@@ -163,8 +199,8 @@ void test_STS_Servo_Init_Invalid_ID(void) {
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
     // ID 254 and 255 are protocol reserved 
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, TEST_ID_RESERVED));
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, TEST_ID_BROADCAST));
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, STS_ID_BROADCAST_SYNC));
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, STS_ID_BROADCAST_ASYNC));
 }
 
 void test_STS_Servo_Init_ID_Boundaries(void) {
@@ -205,7 +241,7 @@ void test_STS_Servo_Init_Atomic_Failure(void) {
     (void)STS_Servo_Init(&servo, &bus, TEST_VALID_ID);
 
     // Failed init should leave existing state untouched 
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, TEST_ID_BROADCAST));
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, STS_ID_BROADCAST_ASYNC));
     TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, servo.id);
 }
 
@@ -234,4 +270,168 @@ void test_STS_Servo_Init_Multi_Bus_Link(void) {
 
     TEST_ASSERT_EQUAL_PTR(&bus_a, servo_a.bus);
     TEST_ASSERT_EQUAL_PTR(&bus_b, servo_b.bus);
+}
+
+/* ==========================================================================
+ * TESTS: STS Servo Read/Write Primitives
+ * ========================================================================== */
+
+void test_STS_Write8_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t result = STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+}
+
+void test_STS_Read8_Success(void) {
+    uint8_t actual_read_value = 0U;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_VAL_8BIT};
+    
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN; 
+
+    sts_result_t result = STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &actual_read_value);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+    TEST_ASSERT_EQUAL_HEX8(TEST_VAL_8BIT, actual_read_value);
+}
+
+void test_STS_Write16_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t result = STS_Write16(&test_servo, STS_REG_GOAL_POSITION, TEST_VAL_16BIT);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+}
+
+void test_STS_Read16_Success(void) {
+    uint16_t actual_read_value = 0U;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {TEST_VAL_16BIT_LOW, TEST_VAL_16BIT_HIGH}; 
+    
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN; 
+
+    sts_result_t result = STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+    TEST_ASSERT_EQUAL_HEX16(TEST_VAL_16BIT, actual_read_value);
+}
+
+/* ==========================================================================
+ * TESTS: STS Engine Robustness & Error Handling
+ * ========================================================================== */
+
+void test_STS_Primitives_All_Null_Guards(void) {
+    uint16_t val16;
+    uint8_t val8;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Write8(NULL, STS_REG_TORQUE_ENABLE, STS_REG_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Write16(NULL, STS_REG_GOAL_POSITION, TEST_VAL_16BIT));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Read8(NULL, STS_REG_PRESENT_VOLTAGE, &val8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Read16(NULL, STS_REG_PRESENT_POSITION, &val16));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, NULL));
+}
+
+void test_STS_Primitives_All_Timeout(void) {
+    uint8_t val8;
+    uint16_t val16;
+    dummy_uart_port.rx_len = 0U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write16(&test_servo, STS_REG_GOAL_POSITION, TEST_VAL_16BIT));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &val8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &val16));
+}
+
+void test_STS_Primitives_All_Data_Integrity(void) {
+    uint16_t val16;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {TEST_VAL_16BIT_LOW, TEST_VAL_16BIT_HIGH};
+
+    simulate_servo_response(TEST_ALT_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_ID_MISMATCH, STS_Write16(&test_servo, STS_REG_GOAL_POSITION, TEST_VAL_16BIT));
+
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_buffer[IDX_CHECKSUM_16BIT_READ] ^= CORRUPT_CHECKSUM_MASK; 
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_CHECKSUM, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &val16));
+}
+
+void test_STS_Primitives_All_Hardware_Errors(void) {
+    uint16_t dummy_val; 
+    
+    test_bus.transmit = mock_tx_busy; 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    
+    test_bus.transmit = mock_tx_fail; 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &dummy_val));
+
+    test_bus.transmit = mock_tx; 
+}
+
+void test_STS_ExecuteCommand_Header_Corruption(void) {
+    uint8_t val8;
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    
+    dummy_uart_port.rx_buffer[IDX_HEADER_START] = CORRUPT_HEADER_BYTE; 
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN; 
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HEADER, STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &val8));
+}
+
+void test_STS_ExecuteCommand_Length_Mismatch(void) {
+    uint16_t actual_read_value;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {HW_STATUS_OK, HW_STATUS_OK};
+    
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    
+    dummy_uart_port.rx_buffer[IDX_LENGTH_BYTE] = FAKE_LONG_PACKET_LENGTH; 
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN; 
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value));
+}
+
+void test_STS_ExecuteCommand_Standard_Write_Safety(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t result = STS_Write16(&test_servo, STS_REG_GOAL_POSITION, TEST_VAL_16BIT); 
+    
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+}
+void test_STS_ExecuteCommand_Buffer_Overflow(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t result = STS_Write16(&test_servo, STS_REG_GOAL_POSITION, TEST_VAL_16BIT); 
+    
+    TEST_ASSERT_EQUAL_INT(STS_OK, result);
+}
+
+void test_STS_ExecuteCommand_Truncated_Packet(void) {
+    uint8_t actual_read_value;
+    
+    dummy_uart_port.rx_buffer[IDX_HEADER_START] = 0xFF;
+    dummy_uart_port.rx_buffer[IDX_HEADER_START + 1] = 0xFF;
+    dummy_uart_port.rx_len = TRUNCATED_PACKET_LENGTH; 
+
+    sts_result_t result = STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &actual_read_value);
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, result);
+}
+
+void test_STS_Primitives_Read_Broadcast_Forbidden(void) {
+    uint8_t actual_read_value;
+    
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+    sts_result_t result = STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &actual_read_value);
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, result);
+    
+    test_servo.id = TEST_VALID_ID;
 }
