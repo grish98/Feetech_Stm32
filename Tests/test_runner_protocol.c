@@ -1,15 +1,16 @@
 /**
  ******************************************************************************
- * @file           : test_runner.c
+ * @file           : test_runner_protocol.c
  * @brief          : STS Protocol Layer Unit Test Runner
  * @author         : Grisham Balloo
- * @date           : 2026-02-28
- * @version        : 1.1.0
+ * @date           : 2026-03-03
+ * @version        : 1.2.0
  ******************************************************************************
  * * @details 
  * This file serves as the main entry point for the STS Protocol Layer unit 
- * tests. It utilizes the Unity Test Framework to orchestrate the execution 
+ * tests. It utilises the Unity Test Framework to orchestrate the execution 
  * of test cases defined in 'test_sts_protocol.c'.
+ * * @note previously named 'test_protocol_runner.c' but renamed for consistency with the servo test runner.
  * * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
  ******************************************************************************

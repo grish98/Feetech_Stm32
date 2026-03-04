@@ -35,11 +35,18 @@ set(FIRMWARE_SOURCES
 )
 
 # PC Only 
-set(TEST_SOURCES
-    Tests/test_runner.c
+set(TEST_PROTOCOL_SOURCES
+    Tests/test_runner_protocol.c
     Tests/test_sts_protocol.c
     Tests/test_sts_utils.c
     Tests/Unity/unity.c
+)
+
+set(TEST_SERVO_SOURCES
+    Tests/test_runner_servo.c
+    Tests/test_sts_servo.c
+    Tests/Unity/unity.c
+    Tests/test_sts_utils.c
 )
 
 # Detect if we are using the ARM Toolchain or Native (Windows)
@@ -68,45 +75,46 @@ else()
 
     enable_testing()
 
-    add_executable(test_runner ${TEST_SOURCES} ${DRIVER_SOURCES})
-    target_include_directories(test_runner PRIVATE 
+    # ---  Protocol Test Executable ---
+    add_executable(test_protocol ${TEST_PROTOCOL_SOURCES} ${DRIVER_SOURCES})
+    target_include_directories(test_protocol PRIVATE 
         Lib/STS_Servo/Inc
-        Tests           # Added: Allows test files to find utils.h easily
+        Tests           
         Tests/Unity
         App/Inc
     )
+    add_test(NAME ProtocolTests COMMAND test_protocol)
 
-    add_test(NAME ProtocolTests COMMAND test_runner)
+    # ---  Servo Test Executable ---
+    add_executable(test_servo ${TEST_SERVO_SOURCES} ${DRIVER_SOURCES})
+    target_include_directories(test_servo PRIVATE 
+        Lib/STS_Servo/Inc
+        Tests           
+        Tests/Unity
+        App/Inc
+    )
+    add_test(NAME ServoTests COMMAND test_servo)
+
+    # --- Doxygen Section ---
     find_package(Doxygen)
-
-   
-    find_package(Doxygen)
-        if(DOXYGEN_FOUND)
-            set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
-            set(DOXYGEN_GENERATE_LATEX NO)
-            set(DOXYGEN_RECURSIVE YES)
-            set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
-    
-            set(DOXYGEN_EXCLUDE_PATTERNS 
-                "*/Drivers/*" 
-                "*/cmake/*" 
-                "*/build/*"
-                "*/Tests/*"
-            )
-
-            set(DOC_INPUT 
-                "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
-                "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
-                "${CMAKE_CURRENT_SOURCE_DIR}/App"
-            )
-
-            doxygen_add_docs(docs
-                ${DOC_INPUT}
-                COMMENT "Generating API documentation with README as landing page..."
-            )
-        endif()
+    if(DOXYGEN_FOUND)
+        set(DOXYGEN_PROJECT_NAME "Feetech STS Driver")
+        set(DOXYGEN_GENERATE_LATEX NO)
+        set(DOXYGEN_RECURSIVE YES)
+        set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+        set(DOXYGEN_EXCLUDE_PATTERNS 
+            "*/Drivers/*" "*/cmake/*" "*/build/*" "*/Tests/*"
+        )
+        set(DOC_INPUT 
+            "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
+            "${CMAKE_CURRENT_SOURCE_DIR}/App"
+        )
+        doxygen_add_docs(docs ${DOC_INPUT}
+            COMMENT "Generating API documentation..."
+        )
+    endif()
 endif()
-
 
 
 
