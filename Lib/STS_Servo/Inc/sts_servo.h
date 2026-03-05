@@ -3,13 +3,17 @@
  * @file           : sts_servo.h
  * @brief          : STS Service Layer and Hardware Abstraction Definitions
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
+ * @date           : 2026-03-05
  * @version        : 0.2.0
  ******************************************************************************
  * @details
- * This header defines the Hardware Abstraction Layer  for the Feetech 
- * STS protocol. It utilizes an injected-dependency model (function pointers) 
+ * Defines the Hardware Abstraction Layer and public API for the Feetech STS
+ * protocol service layer. Uses an injected-dependency model (function pointers)
  * to remain agnostic of the underlying MCU or UART implementation.
+ *
+ * Exposes the bus handle, servo handle, HAL typedefs, register access
+ * primitives, and the ping service. The internal sts_cmd_t struct is
+ * conditionally visible for white-box unit testing via STATIC_TESTABLE.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -102,3 +106,20 @@ sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out)
  * @brief Reads a word (16-bit) from a specific servo register (Little-Endian).
  */
 sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_out);
+
+
+/** @cond INTERNAL */
+/**
+ * @brief Internal transaction context for the command engine.
+ * Exposed in header strictly for unit testing visibility.
+ */
+typedef struct {
+    uint8_t instruction;
+    const uint8_t *tx_params;
+    uint16_t tx_param_len;
+    uint16_t expected_rx_len;
+    uint8_t *rx_params_out;
+    uint16_t rx_params_size;
+    uint16_t *rx_param_len_out;
+} sts_cmd_t;
+/** @endcond */

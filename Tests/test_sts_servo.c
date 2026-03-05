@@ -3,14 +3,37 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
- * @version        : 0.1.0
+ * @date           : 2026-03-05
+ * @version        : 0.2.0
  ******************************************************************************
- * @details
- * This module implements the test cases for the Feetech STS Service layer.
- * Initial focus is placed on the Bus Hardware Abstraction Layer (HAL),
- * ensuring that function pointers are correctly mapped, memory is 
- * initialized deterministically, and NULL pointer guards are enforced.
+@details
+ * This test suite provides verification for the Feetech STS Service Layer
+ * and Bus HAL implementation. It utilises the Unity Test Framework to
+ * validate the following functional areas:
+ *
+ * 1. Bus Initialisation (8 tests): Validation of HAL function pointer mapping,
+ *    deterministic memory overwrite, null-pointer guards, and re-initialisation
+ *    safety across multiple hardware contexts.
+ *
+ * 2. Servo Handle Initialisation (8 tests): Verification of ID boundary
+ *    enforcement, state reset guarantees, atomic failure behaviour, and
+ *    correct linkage across independent bus instances.
+ *
+ * 3. Register Access Primitives (4 tests): Happy-path coverage for
+ *    STS_Write8, STS_Write16, STS_Read8, and STS_Read16 against a
+ *    simulated UART response.
+ *
+ * 4. Engine Robustness & Error Handling (11 tests): Stress-testing the
+ *    sts_execute_command engine against null guards, bus faults, timeout,
+ *    ID mismatch, checksum corruption, header corruption, malformed length
+ *    fields, broadcast early-exit, and internal buffer overflow detection.
+ *
+ * 5. Ping Service (11 tests): Verification of STS_servo_ping online/offline
+ *    state management across success, timeout, ID mismatch, checksum error,
+ *    bus busy, null guards, broadcast rejection, hardware error tolerance,
+ *    boundary IDs, and offline-to-online recovery.
+ *
+ * @see Lib/STS_Servo/Inc/sts_servo.h for the target API documentation.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -24,47 +47,67 @@
 #include "test_sts_utils.h"
 #include <string.h>
 
-#define TEST_DATA_BYTE    0xAAU
-#define TEST_DATA_LEN     1U
-#define TEST_TIMEOUT_MS   100U
+/* ==========================================================================
+ * Test Environment & Buffer Limits
+ * ========================================================================== */
+#define TEST_MAX_TX_BUFFER          128U
+#define TEST_MAX_RX_BUFFER          128U
+#define TEST_TIMEOUT_MS             100U
 
-#define TEST_VALID_ID          10U
-#define TEST_ALT_ID            20U
-#define TEST_MIN_ID             0U
-#define TEST_MAX_ID             253U
+/* ==========================================================================
+ * Mock Hardware & Identity Configurations
+ * ========================================================================== */
+#define MOCK_BUS_ADDR_A             ((void*)0x1111)
+#define MOCK_BUS_ADDR_B             ((void*)0x2222)
 
+#define TEST_MIN_ID                 0U
+#define TEST_VALID_ID               10U
+#define TEST_ALT_ID                 20U
+#define TEST_MAX_ID                 253U
 
-#define MOCK_BUS_ADDR_A         ((void*)0x1111)
-#define MOCK_BUS_ADDR_B         ((void*)0x2222)
+/* ==========================================================================
+ * Protocol Sizing & Expected Lengths
+ * ========================================================================== */
+#define PAYLOAD_LEN_NONE            0U
+#define PAYLOAD_LEN_1_BYTE          1U
+#define PAYLOAD_LEN_2_BYTES         2U
 
-#define HW_STATUS_OK                 0x00U
+/* Expected RX Lengths = STS Base ACK (6 bytes) + Data Payload Length */
+#define EXPECTED_WRITE_ACK_LEN      (6U + PAYLOAD_LEN_NONE)    /* 6U */
+#define EXPECTED_READ8_ACK_LEN      (6U + PAYLOAD_LEN_1_BYTE)  /* 7U */
+#define EXPECTED_READ16_ACK_LEN     (6U + PAYLOAD_LEN_2_BYTES) /* 8U */
 
-#define EXPECTED_WRITE_ACK_LEN       6U
-#define EXPECTED_READ8_ACK_LEN       7U
-#define EXPECTED_READ16_ACK_LEN      8U
+/* ==========================================================================
+ * Standard Test Data Values
+ * ========================================================================== */
+#define HW_STATUS_OK                0x00U
 
-#define PAYLOAD_LEN_NONE             0U
-#define PAYLOAD_LEN_1_BYTE           1U
-#define PAYLOAD_LEN_2_BYTES          2U
+#define TEST_DATA_BYTE              0xAAU
+#define TEST_DATA_LEN               1U
 
-#define TEST_VAL_8BIT                0x7FU
-#define TEST_VAL_16BIT               0x1234U
-#define TEST_VAL_16BIT_LOW           0x34U
-#define TEST_VAL_16BIT_HIGH          0x12U
+#define TEST_VAL_8BIT               0x7FU
+#define TEST_VAL_16BIT              0x1234U
+#define TEST_VAL_16BIT_LOW          0x34U  /* Little-endian lower byte */
+#define TEST_VAL_16BIT_HIGH         0x12U  /* Little-endian upper byte */
 
-#define IDX_HEADER_START             0U
-#define IDX_LENGTH_BYTE              3U
-#define IDX_CHECKSUM_16BIT_READ      7U
+/* ==========================================================================
+ * Packet Corruption & Error Injection Constants
+ * ========================================================================== */
+/* Byte Indices in a standard STS Packet */
+#define IDX_HEADER_START            0U
+#define IDX_LENGTH_BYTE             3U
+#define IDX_CHECKSUM_16BIT_READ     7U     /* Index of CS in an 8-byte packet */
 
-#define CORRUPT_HEADER_BYTE          0xEEU
-#define CORRUPT_CHECKSUM_MASK        0xFFU
-#define FAKE_LONG_PACKET_LENGTH      10U
-#define TRUNCATED_PACKET_LENGTH      2U
-
-#define TEST_MAX_BUFFER_LIMIT 128U
+/* Corrupt Values */
+#define CORRUPT_HEADER_BYTE         0xEEU
+#define CORRUPT_CHECKSUM_MASK       0xFFU
+#define FAKE_LONG_PACKET_LENGTH     10U
+#define TRUNCATED_PACKET_LENGTH     2U
 
 static sts_bus_t test_bus;
 static sts_servo_t test_servo; 
+
+extern sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd);
 
 void setUp(void) {
     /* 1. Completely wipe the globals to prevent state leakage */
@@ -162,7 +205,8 @@ void test_STS_Bus_Interface_Execution(void) {
     
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
-    // Verify that the pointers in the bus are functional and correctly routed 
+    dummy_uart_port.rx_len = TEST_DATA_LEN; 
+
     TEST_ASSERT_EQUAL(STS_OK, bus.transmit(&bus, &dummy_data, TEST_DATA_LEN));
     TEST_ASSERT_EQUAL(STS_OK, bus.receive(&bus, &dummy_data, TEST_DATA_LEN, TEST_TIMEOUT_MS));
 }
@@ -438,6 +482,88 @@ void test_STS_Primitives_Read_Broadcast_Forbidden(void) {
     test_servo.id = TEST_VALID_ID;
 }
 
+
+void test_STS_ExecuteCommand_TrashBin_Redirect(void) {
+    uint8_t mock_payload[1] = {0xAB};
+    simulate_servo_response(TEST_VALID_ID, STS_OK, mock_payload, 1U, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    uint8_t params[2] = {STS_REG_PRESENT_TEMP, 1U};
+    sts_cmd_t cmd = { 
+        .instruction      = STS_INST_READ,
+        .tx_params        = params,
+        .tx_param_len     = 2U,
+        .expected_rx_len  = EXPECTED_READ8_ACK_LEN,
+        .rx_params_out    = NULL,
+        .rx_params_size   = 0U,
+        .rx_param_len_out = NULL
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, sts_execute_command(&test_servo, &cmd));
+}
+
+
+void test_STS_ExecuteCommand_RX_Buffer_Overflow(void) {
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_READ,
+        .expected_rx_len  = (uint16_t)(TEST_MAX_RX_BUFFER + 10U), // Exceed internal bounds 
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, sts_execute_command(&test_servo, &cmd));
+}
+
+void test_STS_ExecuteCommand_TX_Buffer_Overflow(void) {
+    uint8_t massive_payload[TEST_MAX_TX_BUFFER + 10U] = {0};
+    
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_WRITE,
+        .tx_params        = massive_payload,
+        .tx_param_len     = (uint16_t)(TEST_MAX_TX_BUFFER + 10U), // Exceed internal bounds 
+        .expected_rx_len  = EXPECTED_WRITE_ACK_LEN
+    };
+
+    TEST_ASSERT_NOT_EQUAL(STS_OK, sts_execute_command(&test_servo, &cmd));
+}
+
+void test_STS_ExecuteCommand_Zero_Expected_RX(void) {
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_WRITE,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = 0U, // Force the early exit logic 
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, sts_execute_command(&test_servo, &cmd));
+}
+
+void test_STS_ExecuteCommand_Broadcast_Forces_Early_Exit(void) {
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+    
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_WRITE,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = EXPECTED_WRITE_ACK_LEN, 
+        .rx_params_out    = NULL,
+        .rx_params_size   = 0U,
+        .rx_param_len_out = NULL
+    };
+
+    sts_result_t res = sts_execute_command(&test_servo, &cmd);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    
+    test_servo.id = TEST_VALID_ID;
+}
+
+void test_STS_ExecuteCommand_Null_Cmd_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, sts_execute_command(&test_servo, NULL));
+}
+
+/* ==========================================================================
+ * TESTS: STS Ping 
+ * ========================================================================== */
+
 void test_STS_Ping_Success(void) {
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
@@ -509,6 +635,7 @@ void test_STS_Ping_Broadcast_Forbidden(void) {
 
     test_servo.id = TEST_VALID_ID;
 }
+
 void test_STS_Ping_Null_Bus_Pointer(void) {
     test_servo.bus = NULL; 
 

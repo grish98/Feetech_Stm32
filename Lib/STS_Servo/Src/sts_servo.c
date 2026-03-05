@@ -3,13 +3,25 @@
  * @file           : sts_servo.c
  * @brief          : STS Service Layer Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
- * @version        : 0.1.0
+ * @date           : 2026-03-05
+ * @version        : 0.2.0
  ******************************************************************************
  * @details
- * This module implements the high-level service functions for the Feetech 
- * STS protocol. It handles the shared bus abstraction and manages individual 
- * servo handles, providing a hardware-agnostic interface for motor control.
+ * This module implements the high-level service functions for the Feetech STS
+ * protocol. It provides a hardware-agnostic interface for motor control through
+ * the following functional areas:
+ *
+ * - Bus HAL: STS_Bus_Init maps platform transmit/receive function pointers
+ *   onto a shared bus handle.
+ * - Servo Handle: STS_Servo_Init binds a servo ID to a bus and initialises
+ *   online state to offline.
+ * - Command Engine: sts_execute_command (STATIC_TESTABLE) is the single
+ *   transaction path — handles framing, TX, RX, and response parsing with
+ *   internal buffer overflow guards and broadcast early-exit logic.
+ * - Ping: STS_servo_ping issues a PING instruction and updates is_online,
+ *   distinguishing communication failures from servo hardware errors.
+ * - Register Primitives: STS_Write8, STS_Write16, STS_Read8, STS_Read16
+ *   provide typed register access built on the command engine.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -20,36 +32,37 @@
 #include "sts_registers.h"
 #include <string.h>
 
+#ifdef UNIT_TESTING
+    #define STATIC_TESTABLE 
+#else
+    #define STATIC_TESTABLE static
+#endif
+
+/* ==========================================================================
+ * STS Configuration & Limits
+ * ========================================================================== */
 #define STS_MAX_TX_BUFFER       128U
 #define STS_MAX_RX_BUFFER       128U
-
 #define STS_DEFAULT_TIMEOUT_MS  10U
-/* --- Protocol Sizing Macros --- */
-#define STS_ACK_BASE_LEN         6U  /* Standard response packet overhead (2 Header, 1 ID, 1 Len, 1 Status, 1 CS) */
 
-#define STS_DATA_LEN_1_BYTE      1U  /* 8-bit data payload */
-#define STS_DATA_LEN_2_BYTES     2U  /* 16-bit data payload */
+/* ==========================================================================
+ * STS Protocol Framing & Sizing
+ * ========================================================================== */
+/* Packet Overhead: 2 Header + 1 ID + 1 Length + 1 Status + 1 Checksum */
+#define STS_ACK_BASE_LEN        6U  
 
-#define STS_WRITE8_PARAM_LEN     2U  /* TX Params for Write8: Address + 1 Data Byte */
-#define STS_WRITE16_PARAM_LEN    3U  /* TX Params for Write16: Address + 2 Data Bytes */
-#define STS_READ_CMD_PARAM_LEN   2U  /* TX Params for Read Commands: Address + Length to read */
+/* Base sizes for protocol elements */
+#define STS_REG_ADDR_LEN        1U  /* Register addresses are always 1 byte */
+#define STS_DATA_LEN_8BIT       1U  /* 8-bit data payload */
+#define STS_DATA_LEN_16BIT      2U  /* 16-bit data payload */
 
-#define STS_ID_BROADCAST_SYNC   0xFEU /* 254: Broadcast (Execute immediately) */
-#define STS_ID_BROADCAST_ASYNC  0xFFU /* 255: Broadcast (Wait for action command) */
-
-/**
- * @brief Internal transaction context for the command engine.
+/* --- Derived Command Parameter Lengths --- 
+ * TX Params for Read/Write commands always consist of the Register Address 
+ * followed by the Data (or the Length of data to read).
  */
-typedef struct {
-    uint8_t instruction;
-    const uint8_t *tx_params;
-    uint16_t tx_param_len;
-    uint16_t expected_rx_len;
-    uint8_t *rx_params_out;
-    uint16_t rx_params_size;
-    uint16_t *rx_param_len_out;
-} sts_cmd_t;
-
+#define STS_WRITE8_PARAM_LEN    (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U */
+#define STS_WRITE16_PARAM_LEN   (STS_REG_ADDR_LEN + STS_DATA_LEN_16BIT)  /* 3U */
+#define STS_READ_CMD_PARAM_LEN  (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U (Address + Length byte) */
 
 /**
  * @brief  Core command execution engine. Handles framing, TX, RX, and parsing safely.
@@ -57,12 +70,18 @@ typedef struct {
  * @param  cmd   Pointer to the command configuration struct.
  * @return STS_OK on success, or specific sts_result_t error code.
  */
-static sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd) {
+STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd) {
     if (servo == NULL || cmd == NULL || servo->bus == NULL) {
         return STS_ERR_NULL_PTR;
     }
     if (servo->bus->transmit == NULL || servo->bus->receive == NULL) {
         return STS_ERR_NULL_PTR;
+    }
+    if (cmd->expected_rx_len > STS_MAX_RX_BUFFER) {
+        return STS_ERR_BUF_TOO_SMALL; 
+    }
+    if (cmd->tx_param_len > (STS_MAX_TX_BUFFER - STS_MIN_PACKET_SIZE)) {
+        return STS_ERR_BUF_TOO_SMALL;
     }
 
     /* Static buffers: deterministic bare-metal memory. Not thread-safe by design.
@@ -208,23 +227,23 @@ sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out)
         return STS_ERR_INVALID_PARAM; 
     }
 
-    uint8_t params[STS_READ_CMD_PARAM_LEN]  = {reg_addr, STS_DATA_LEN_1_BYTE};
-    uint8_t rx_data[STS_DATA_LEN_1_BYTE]    = {0};
+    uint8_t params[STS_READ_CMD_PARAM_LEN]  = {reg_addr, STS_DATA_LEN_8BIT};
+    uint8_t rx_data[STS_DATA_LEN_8BIT]    = {0};
     uint16_t rx_len                         = 0U;
 
     sts_cmd_t cmd = {
         .instruction      = STS_INST_READ,
         .tx_params        = params,
         .tx_param_len     = STS_READ_CMD_PARAM_LEN,
-        .expected_rx_len  = STS_ACK_BASE_LEN + STS_DATA_LEN_1_BYTE,
+        .expected_rx_len  = STS_ACK_BASE_LEN + STS_DATA_LEN_8BIT,
         .rx_params_out    = rx_data,
-        .rx_params_size   = STS_DATA_LEN_1_BYTE,
+        .rx_params_size   = STS_DATA_LEN_8BIT,
         .rx_param_len_out = &rx_len
     };
 
     sts_result_t res = sts_execute_command(servo, &cmd);
     
-    if (res == STS_OK && rx_len == STS_DATA_LEN_1_BYTE) {
+    if (res == STS_OK && rx_len == STS_DATA_LEN_8BIT) {
         *value_out = rx_data[0];
     }
     return res;
@@ -238,23 +257,23 @@ sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_ou
         return STS_ERR_INVALID_PARAM;
     }
 
-    uint8_t params[STS_READ_CMD_PARAM_LEN]  = {reg_addr, STS_DATA_LEN_2_BYTES};
-    uint8_t rx_data[STS_DATA_LEN_2_BYTES]   = {0};
+    uint8_t params[STS_READ_CMD_PARAM_LEN]  = {reg_addr, STS_DATA_LEN_16BIT};
+    uint8_t rx_data[STS_DATA_LEN_16BIT]   = {0};
     uint16_t rx_len                         = 0U;
 
     sts_cmd_t cmd = {
         .instruction      = STS_INST_READ,
         .tx_params        = params,
         .tx_param_len     = STS_READ_CMD_PARAM_LEN,
-        .expected_rx_len  = STS_ACK_BASE_LEN + STS_DATA_LEN_2_BYTES, 
+        .expected_rx_len  = STS_ACK_BASE_LEN + STS_DATA_LEN_16BIT, 
         .rx_params_out    = rx_data,
-        .rx_params_size   = STS_DATA_LEN_2_BYTES,
+        .rx_params_size   = STS_DATA_LEN_16BIT,
         .rx_param_len_out = &rx_len
     };
 
     sts_result_t res = sts_execute_command(servo, &cmd);
     
-    if (res == STS_OK && rx_len == STS_DATA_LEN_2_BYTES) {
+    if (res == STS_OK && rx_len == STS_DATA_LEN_16BIT) {
         *value_out = (uint16_t)(rx_data[0] | (rx_data[1] << 8U)); 
     }
     return res;

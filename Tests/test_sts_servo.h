@@ -3,11 +3,12 @@
  * @file           : test_sts_servo.h
  * @brief          : Unit test declarations for the STS Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
- * @version        : 0.1.0
+ * @date           : 2026-03-05
+ * @version        : 0.2.0
  ******************************************************************************
  * @details
- * This header declares the test cases for the STS Bus Hardware Abstraction Layer.
+ * Declares all unit test cases for the STS Service Layer, covering bus and
+ * servo initialisation, read/write primitives, the command engine, and ping.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -42,6 +43,8 @@ extern void test_STS_Write8_Success(void);
 extern void test_STS_Read8_Success(void);
 extern void test_STS_Write16_Success(void);
 extern void test_STS_Read16_Success(void);
+
+/*--- STS Command  Engine Tests ---*/
 extern void test_STS_Primitives_All_Null_Guards(void);
 extern void test_STS_Primitives_All_Timeout(void);
 extern void test_STS_Primitives_All_Data_Integrity(void);
@@ -51,6 +54,12 @@ extern void test_STS_ExecuteCommand_Length_Mismatch(void);
 extern void test_STS_ExecuteCommand_Buffer_Overflow(void);
 extern void test_STS_ExecuteCommand_Truncated_Packet(void);
 extern void test_STS_Primitives_Read_Broadcast_Forbidden(void);
+extern void test_STS_ExecuteCommand_TrashBin_Redirect(void);
+extern void test_STS_ExecuteCommand_RX_Buffer_Overflow(void);
+extern void test_STS_ExecuteCommand_TX_Buffer_Overflow(void);
+extern void test_STS_ExecuteCommand_Zero_Expected_RX(void);
+extern void test_STS_ExecuteCommand_Broadcast_Forces_Early_Exit(void);
+extern void test_STS_ExecuteCommand_Null_Cmd_Guard(void);
 
 /* --- Servo Ping Tests --- */
 extern void test_STS_Ping_Success(void);

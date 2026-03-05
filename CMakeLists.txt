@@ -93,6 +93,7 @@ else()
         Tests/Unity
         App/Inc
     )
+    target_compile_definitions(test_servo PRIVATE UNIT_TESTING)
     add_test(NAME ServoTests COMMAND test_servo)
 
     # --- Doxygen Section ---
