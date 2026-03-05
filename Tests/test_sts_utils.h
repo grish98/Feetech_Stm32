@@ -23,14 +23,12 @@
 #include "sts_servo.h"
 
 
-/** 
- * @brief A dummy struct to represent a Hardware Peripheral.
- * This mimics the memory layout of a STM32 UART peripheral.
+/** * @brief A mock testing structure to simulate hardware data queues.
+ * Used by mock_tx and mock_rx to inject and verify STS protocol packets.
  */
 typedef struct {
-    uint32_t cr1; /**< Control Register */
-    uint32_t dr;  /**< Data Register */
-    uint32_t sr;  /**< Status Register */
+    uint8_t rx_buffer[256]; /**< Buffer to hold fake responses */
+    uint16_t rx_len;        /**< Number of bytes ready to be read */
 } mock_uart_t;
 
 /* Extern declaration so all test files can point to the same 'hardware' */
@@ -47,6 +45,17 @@ sts_result_t mock_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len);
  * This simulates a successful reception over the bus.
  */
 sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms);
+
+/** 
+ * @brief Mock Transmit Function that simulates a hardware failure (e.g., cable disconnected).
+ */
+sts_result_t mock_tx_fail(sts_bus_t *bus, const uint8_t *data, uint16_t len);
+
+
+/** 
+ * @brief Mock Transmit Function that simulates a busy state (e.g., UART buffer full).
+ */
+sts_result_t mock_tx_busy(sts_bus_t *bus, const uint8_t *data, uint16_t len);
 
 /**
  * @brief Manually constructs a raw byte array representing a servo response.

@@ -3,12 +3,13 @@
  * @file           : test_runner_servo.c
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
- * @version        : 0.1.0
+ * @date           : 2026-03-05
+ * @version        : 0.2.0
  ******************************************************************************
  * @details
- * Entry point for STS Service layer testing using the Unity framework.
- * Orchestrates execution of Bus HAL and Servo handle validation tests.
+ * Entry point for STS Service Layer testing using the Unity framework.
+ * Orchestrates execution of all bus HAL, servo handle, read/write primitive,
+ * command engine, and ping service test cases.
  ******************************************************************************
  */
  
@@ -31,6 +32,8 @@ int main(void) {
     RUN_TEST(test_STS_Bus_Init_Null_RX);
     RUN_TEST(test_STS_Bus_Init_Null_Port_Handle_Succeeds);
     RUN_TEST(test_STS_Bus_Init_Overwrites_Garbage);
+    RUN_TEST(test_STS_Bus_Init_Reinitialization);
+    RUN_TEST(test_STS_Bus_Interface_Execution);
 
     printf("\n--- STS Servo Initialization Tests ---\n");
     RUN_TEST(test_STS_Servo_Init_Success);
@@ -42,6 +45,42 @@ int main(void) {
     RUN_TEST(test_STS_Servo_Init_Atomic_Failure);
     RUN_TEST(test_STS_Servo_Init_Reset_Online_Status);
     RUN_TEST(test_STS_Servo_Init_Multi_Bus_Link);
+
+    printf("\n--- STS Servo Read/Write Tests ---\n");
+    RUN_TEST(test_STS_Write8_Success);
+    RUN_TEST(test_STS_Read8_Success);
+    RUN_TEST(test_STS_Write16_Success);
+    RUN_TEST(test_STS_Read16_Success);
+
+    printf("\n--- STS Command  Engine Tests ---\n");
+    RUN_TEST(test_STS_Primitives_All_Null_Guards);
+    RUN_TEST(test_STS_Primitives_All_Timeout);
+    RUN_TEST(test_STS_Primitives_All_Data_Integrity);
+    RUN_TEST(test_STS_Primitives_All_Hardware_Errors);
+    RUN_TEST(test_STS_ExecuteCommand_Header_Corruption);
+    RUN_TEST(test_STS_ExecuteCommand_Length_Mismatch);
+    RUN_TEST(test_STS_ExecuteCommand_Buffer_Overflow);
+    RUN_TEST(test_STS_ExecuteCommand_Truncated_Packet);
+    RUN_TEST(test_STS_Primitives_Read_Broadcast_Forbidden);
+    RUN_TEST(test_STS_ExecuteCommand_TrashBin_Redirect);
+    RUN_TEST(test_STS_ExecuteCommand_RX_Buffer_Overflow);
+    RUN_TEST(test_STS_ExecuteCommand_TX_Buffer_Overflow);
+    RUN_TEST(test_STS_ExecuteCommand_Zero_Expected_RX);
+    RUN_TEST(test_STS_ExecuteCommand_Broadcast_Forces_Early_Exit);
+    RUN_TEST(test_STS_ExecuteCommand_Null_Cmd_Guard);
+
+    printf("\n--- STS Servo Ping Tests ---\n");
+    RUN_TEST(test_STS_Ping_Success);    
+    RUN_TEST(test_STS_Ping_Timeout_Sets_Offline);
+    RUN_TEST(test_STS_Ping_ID_Mismatch_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Checksum_Error_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Bus_Busy_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Null_Servo_Guard);
+    RUN_TEST(test_STS_Ping_Broadcast_Forbidden);
+    RUN_TEST(test_STS_Ping_Null_Bus_Pointer);
+    RUN_TEST(test_STS_Ping_Hardware_Error_Still_Online);
+    RUN_TEST(test_STS_Ping_Max_Valid_ID);
+    RUN_TEST(test_STS_Ping_Recovery_Offline_To_Online);
 
     return UNITY_END();
 }
