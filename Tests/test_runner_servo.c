@@ -57,7 +57,19 @@ int main(void) {
     RUN_TEST(test_STS_ExecuteCommand_Buffer_Overflow);
     RUN_TEST(test_STS_ExecuteCommand_Truncated_Packet);
     RUN_TEST(test_STS_Primitives_Read_Broadcast_Forbidden);
-    
+
+    printf("\n--- STS Servo Ping Tests ---\n");
+    RUN_TEST(test_STS_Ping_Success);    
+    RUN_TEST(test_STS_Ping_Timeout_Sets_Offline);
+    RUN_TEST(test_STS_Ping_ID_Mismatch_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Checksum_Error_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Bus_Busy_Sets_Offline);
+    RUN_TEST(test_STS_Ping_Null_Servo_Guard);
+    RUN_TEST(test_STS_Ping_Broadcast_Forbidden);
+    RUN_TEST(test_STS_Ping_Null_Bus_Pointer);
+    RUN_TEST(test_STS_Ping_Hardware_Error_Still_Online);
+    RUN_TEST(test_STS_Ping_Max_Valid_ID);
+    RUN_TEST(test_STS_Ping_Recovery_Offline_To_Online);
 
     return UNITY_END();
 }

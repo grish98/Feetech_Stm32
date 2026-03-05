@@ -70,6 +70,14 @@ sts_result_t STS_Bus_Init(sts_bus_t *bus, void *port_handle, sts_hal_transmit_t 
 sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id);
 
 
+/**
+* @brief Pings the servo to check if it's online.
+* @param servo Pointer to the initialized servo handle.
+* @return STS_OK if the servo responds correctly, error code otherwise.
+* On success, the servo's is_online field is set to STS_ONLINE; on failure, it is set to STS_OFFLINE.
+ */
+sts_result_t STS_servo_ping(sts_servo_t *servo);
+
 
 /* ==========================================================================
  * REGISTER ACCESS PRIMITIVES

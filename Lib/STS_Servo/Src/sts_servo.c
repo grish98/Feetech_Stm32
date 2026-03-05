@@ -132,6 +132,35 @@ sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id) {
     return STS_OK;
 }
 
+sts_result_t STS_servo_ping(sts_servo_t *servo) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+
+    if (servo->id == STS_ID_BROADCAST_SYNC || servo->id == STS_ID_BROADCAST_ASYNC) {
+        return STS_ERR_INVALID_PARAM; 
+    }
+
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_PING,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = STS_ACK_BASE_LEN, 
+        .rx_params_out    = NULL,
+        .rx_params_size   = 0U,
+        .rx_param_len_out = NULL
+    };
+
+    sts_result_t res = sts_execute_command(servo, &cmd);
+
+ if (res == STS_OK || res == STS_ERR_HARDWARE){ 
+        servo->is_online = STS_ONLINE;
+    } else {
+        servo->is_online = STS_OFFLINE;
+    }
+    return res;
+}
+
 /* ==========================================================================
  * REGISTER ACCESS PRIMITIVES
  * ========================================================================== */

@@ -61,6 +61,8 @@
 #define FAKE_LONG_PACKET_LENGTH      10U
 #define TRUNCATED_PACKET_LENGTH      2U
 
+#define TEST_MAX_BUFFER_LIMIT 128U
+
 static sts_bus_t test_bus;
 static sts_servo_t test_servo; 
 
@@ -435,3 +437,122 @@ void test_STS_Primitives_Read_Broadcast_Forbidden(void) {
     
     test_servo.id = TEST_VALID_ID;
 }
+
+void test_STS_Ping_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
+}
+
+void test_STS_Ping_Timeout_Sets_Offline(void) {
+    dummy_uart_port.rx_len = 0U;
+    test_servo.is_online = STS_ONLINE; 
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online);
+}
+
+void test_STS_Ping_ID_Mismatch_Sets_Offline(void) {
+    simulate_servo_response(TEST_ALT_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    test_servo.is_online = STS_ONLINE;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_ID_MISMATCH, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online); 
+}
+
+void test_STS_Ping_Checksum_Error_Sets_Offline(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_buffer[5] ^= 0xFF; 
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    test_servo.is_online = STS_ONLINE;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_CHECKSUM, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online);
+}
+
+void test_STS_Ping_Bus_Busy_Sets_Offline(void) {
+    test_bus.transmit = mock_tx_busy;
+    test_servo.is_online = STS_ONLINE;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online);
+
+    test_bus.transmit = mock_tx;
+}
+
+void test_STS_Ping_Null_Servo_Guard(void) {
+    sts_result_t res = STS_servo_ping(NULL);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, res);
+}
+
+void test_STS_Ping_Broadcast_Forbidden(void) {
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+    
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res); 
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online);
+
+    test_servo.id = TEST_VALID_ID;
+}
+void test_STS_Ping_Null_Bus_Pointer(void) {
+    test_servo.bus = NULL; 
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, res);
+    
+    test_servo.bus = &test_bus;
+}
+
+/**
+ * @brief Hardware errors should not set the servo offline, 
+ * as they indicate a problem with the servo's internal state, not a communication failure.
+ */
+void test_STS_Ping_Hardware_Error_Still_Online(void) {
+    uint8_t error_status = 0x01U; 
+    simulate_servo_response(TEST_VALID_ID, error_status, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
+    TEST_ASSERT_NOT_EQUAL(STS_ERR_TIMEOUT, res);// TO DO - CHANGE THIS TO A SPECIFIC HARDWARE ERROR 
+}
+
+void test_STS_Ping_Max_Valid_ID(void) {
+    test_servo.id = TEST_MAX_ID; 
+    simulate_servo_response(TEST_MAX_ID, STS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
+}
+
+void test_STS_Ping_Recovery_Offline_To_Online(void) {
+    test_servo.is_online = STS_OFFLINE; 
+
+    simulate_servo_response(TEST_VALID_ID, STS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    (void)STS_servo_ping(&test_servo);
+
+    TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
+}
+

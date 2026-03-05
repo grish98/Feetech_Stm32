@@ -37,7 +37,7 @@ extern void test_STS_Servo_Init_Atomic_Failure(void);
 extern void test_STS_Servo_Init_Reset_Online_Status(void);
 extern void test_STS_Servo_Init_Multi_Bus_Link(void);
 
-
+/* --- Servo Read/Write Tests --- */
 extern void test_STS_Write8_Success(void);
 extern void test_STS_Read8_Success(void);
 extern void test_STS_Write16_Success(void);
@@ -51,3 +51,16 @@ extern void test_STS_ExecuteCommand_Length_Mismatch(void);
 extern void test_STS_ExecuteCommand_Buffer_Overflow(void);
 extern void test_STS_ExecuteCommand_Truncated_Packet(void);
 extern void test_STS_Primitives_Read_Broadcast_Forbidden(void);
+
+/* --- Servo Ping Tests --- */
+extern void test_STS_Ping_Success(void);
+extern void test_STS_Ping_Timeout_Sets_Offline(void);
+extern void test_STS_Ping_ID_Mismatch_Sets_Offline(void);
+extern void test_STS_Ping_Checksum_Error_Sets_Offline(void);
+extern void test_STS_Ping_Bus_Busy_Sets_Offline(void);
+extern void test_STS_Ping_Null_Servo_Guard(void);    
+extern void test_STS_Ping_Broadcast_Forbidden(void);
+extern void test_STS_Ping_Null_Bus_Pointer(void);
+extern void test_STS_Ping_Hardware_Error_Still_Online(void);
+extern void test_STS_Ping_Max_Valid_ID(void);
+extern void test_STS_Ping_Recovery_Offline_To_Online(void);
