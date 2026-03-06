@@ -49,6 +49,8 @@ int main(void) {
     printf("\n--- STS Parser Tests ---\n");
     RUN_TEST(test_ParseResponse_ValidPosition);
     RUN_TEST(test_ParseResponse_HardwareError);
+    RUN_TEST(test_ParseResponse_HardwareError_With_Noise_Prefix);
+    RUN_TEST(test_ParseResponse_HardwareError_ParamLen_Zeroed);
     RUN_TEST(test_ParseResponse_IDMismatch);
     RUN_TEST(test_ParseResponse_ChecksumError);
     RUN_TEST(test_ParseResponse_MinimumLength);

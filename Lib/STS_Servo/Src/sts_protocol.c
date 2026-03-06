@@ -168,10 +168,10 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
     if (rx_buf == NULL || param_buf == NULL || param_len == NULL) {
         return STS_ERR_NULL_PTR;
     }
+    *param_len = 0U; 
 
     const uint8_t* current_pos = rx_buf;
     uint16_t remaining_len = rx_len;
-
     sts_result_t last_error = STS_ERR_HEADER;
 
     while (remaining_len >= (uint16_t)STS_MIN_PACKET_SIZE) {
@@ -181,12 +181,15 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
             break; 
         }
 
-        uint16_t skipped = (uint16_t)(packet_start - current_pos);
+        remaining_len -= (uint16_t)(packet_start - current_pos);
         current_pos = packet_start;
-        remaining_len -= skipped;
 
         sts_result_t status = sts_validate_packet(expected_id, packet_start, remaining_len);
         last_error = status;
+
+        if (status == STS_ERR_HARDWARE) {
+            return STS_ERR_HARDWARE; 
+        }
 
         if (status == STS_OK) {
             if (packet_start[STS_IDX_LENGTH] < (uint8_t)STS_LENGTH_FIXED_OVERHEAD) {
@@ -202,13 +205,6 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
                 return STS_OK;
             }
         }
-
-
-        if (status == STS_ERR_HARDWARE) {
-
-            return STS_ERR_HARDWARE; 
-
-            }
 
         current_pos++; 
         remaining_len--;
