@@ -3,7 +3,7 @@
  * @file           : sts_protocol.c
  * @brief          : Feetech STS Servo Protocol Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-02-28
+ * @date           : 2026-03-06
  * @version        : 1.2.0
  ******************************************************************************
  * @details
@@ -202,6 +202,13 @@ sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint
                 return STS_OK;
             }
         }
+
+
+        if (status == STS_ERR_HARDWARE) {
+
+            return STS_ERR_HARDWARE; 
+
+            }
 
         current_pos++; 
         remaining_len--;
