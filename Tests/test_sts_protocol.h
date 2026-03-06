@@ -3,7 +3,7 @@
  * @file           : test_sts_protocol.h
  * @brief          : Prototypes for STS Protocol Verification Suite
  * @author         : Grisham Balloo
- * @date           : 2026-02-28
+ * @date           : 2026-03-6
  * @version        : 1.1.0
  ******************************************************************************
  * @details
@@ -55,6 +55,8 @@ extern void test_CreatePacket_InvalidIDRange(void);
    ========================================================================= */
 extern void test_ParseResponse_ValidPosition(void);
 extern void test_ParseResponse_HardwareError(void);
+extern void test_ParseResponse_HardwareError_With_Noise_Prefix(void);
+extern void test_ParseResponse_HardwareError_ParamLen_Zeroed(void);
 extern void test_ParseResponse_IDMismatch(void);
 extern void test_ParseResponse_ChecksumError(void);
 extern void test_ParseResponse_MinimumLength(void);

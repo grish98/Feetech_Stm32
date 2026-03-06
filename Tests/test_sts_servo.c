@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
+ * @date           : 2026-03-06
  * @version        : 0.2.0
  ******************************************************************************
 @details
@@ -658,7 +658,7 @@ void test_STS_Ping_Hardware_Error_Still_Online(void) {
     sts_result_t res = STS_servo_ping(&test_servo);
 
     TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
-    TEST_ASSERT_NOT_EQUAL(STS_ERR_TIMEOUT, res);// TO DO - CHANGE THIS TO A SPECIFIC HARDWARE ERROR 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res); 
 }
 
 void test_STS_Ping_Max_Valid_ID(void) {

@@ -3,7 +3,7 @@
  * @file           : test_sts_protocol.c
  * @brief          : Unit Tests for STS Protocol Layer
  * @author         : Grisham Balloo
- * @date           : 2026-02-28
+ * @date           : 2026-03-06
  * @version        : 1.2.0
  ******************************************************************************
  * @details
@@ -299,6 +299,39 @@ void test_ParseResponse_HardwareError(void) {
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
+}
+
+void test_ParseResponse_HardwareError_With_Noise_Prefix(void) {
+    /* Buffer Layout:
+     * [ 00 AA ] [ FF FF 01 02 04 F8 ]
+     * | Noise | |--- Hardware Error Packet --|
+     * Ensures parser finds and returns STS_ERR_HARDWARE
+     * rather than falling through the scan loop
+     */
+    const uint8_t rx[] = {
+        0x00U, 0xAAU,
+        STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x04U, 0xF8U
+    };
+    uint8_t out_data[10] = {0U};
+    uint16_t out_len;
+
+    sts_result_t result = sts_parse_response(
+        TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx),
+        out_data, (uint16_t)sizeof(out_data), &out_len);
+
+    TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
+}
+
+void test_ParseResponse_HardwareError_ParamLen_Zeroed(void) {
+    uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x04U, 0xF8U};
+    uint8_t out_data[10] = {0U};
+    uint16_t out_len = 0xFFFFU; // Intentionally non-zero
+
+    sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx),
+                       out_data, (uint16_t)sizeof(out_data), &out_len);
+
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_IDMismatch(void) {
