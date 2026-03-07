@@ -73,3 +73,9 @@ extern void test_STS_Ping_Null_Bus_Pointer(void);
 extern void test_STS_Ping_Hardware_Error_Still_Online(void);
 extern void test_STS_Ping_Max_Valid_ID(void);
 extern void test_STS_Ping_Recovery_Offline_To_Online(void);
+
+extern void test_STS_SetTorqueEnable_Success(void);
+extern void test_STS_SetTorqueEnable_Disable(void);
+extern void test_STS_SetTorqueEnable_NonStandard_True(void);
+extern void test_STS_SetTorqueEnable_Null_Pointer(void);
+extern void test_STS_SetTorqueEnable_Error_Propagation(void);

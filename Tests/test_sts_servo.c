@@ -45,6 +45,7 @@
 #include "sts_protocol.h"
 #include "sts_registers.h"
 #include "test_sts_utils.h"
+#include "sts_servo_cmd.h"
 #include <string.h>
 
 /* ==========================================================================
@@ -683,3 +684,49 @@ void test_STS_Ping_Recovery_Offline_To_Online(void) {
     TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
 }
 
+/* ==========================================================================
+ * TESTS: STS Puplic API 
+ * ========================================================================== */
+
+ void test_STS_SetTorqueEnable_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 1U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_Disable(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 0U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_NonStandard_True(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 255U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_Null_Pointer(void) {
+    sts_result_t res = STS_SetTorqueEnable(NULL, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, res);
+}
+
+void test_STS_SetTorqueEnable_Error_Propagation(void) {
+    uint8_t mock_hardware_error = 0x20; 
+    simulate_servo_response(TEST_VALID_ID, mock_hardware_error, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 1U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res);
+}

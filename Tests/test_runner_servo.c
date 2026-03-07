@@ -82,5 +82,13 @@ int main(void) {
     RUN_TEST(test_STS_Ping_Max_Valid_ID);
     RUN_TEST(test_STS_Ping_Recovery_Offline_To_Online);
 
+    printf("\n--- STS Servo Public API  ---\n");
+    RUN_TEST(test_STS_SetTorqueEnable_Success);
+    RUN_TEST(test_STS_SetTorqueEnable_Disable);
+    RUN_TEST(test_STS_SetTorqueEnable_NonStandard_True);
+    RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
+    RUN_TEST(test_STS_SetTorqueEnable_Error_Propagation);
+
+
     return UNITY_END();
 }

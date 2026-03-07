@@ -25,6 +25,7 @@ project(${CMAKE_PROJECT_NAME})
 set(DRIVER_SOURCES
     Lib/STS_Servo/Src/sts_protocol.c
     Lib/STS_Servo/Src/sts_servo.c
+    Lib/STS_Servo/Src/sts_servo_cmd.c
 )
 
 # STM32 Only 
