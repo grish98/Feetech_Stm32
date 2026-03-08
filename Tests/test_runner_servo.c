@@ -3,7 +3,7 @@
  * @file           : test_runner_servo.c
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
+ * @date           : 2026-03-08
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -52,7 +52,7 @@ int main(void) {
     RUN_TEST(test_STS_Write16_Success);
     RUN_TEST(test_STS_Read16_Success);
 
-    printf("\n--- STS Command  Engine Tests ---\n");
+    printf("\n--- STS Command Engine Tests ---\n");
     RUN_TEST(test_STS_Primitives_All_Null_Guards);
     RUN_TEST(test_STS_Primitives_All_Timeout);
     RUN_TEST(test_STS_Primitives_All_Data_Integrity);
@@ -88,6 +88,19 @@ int main(void) {
     RUN_TEST(test_STS_SetTorqueEnable_NonStandard_True);
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
     RUN_TEST(test_STS_SetTorqueEnable_Error_Propagation);
+    RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
+
+    RUN_TEST(test_STS_GetPresentPosition_Success);
+    RUN_TEST(test_STS_Position_API_Null_Guards);
+    RUN_TEST(test_STS_GetPresentPosition_Endianness);
+    RUN_TEST(test_STS_SetTargetPosition_Hardware_Fault);
+    RUN_TEST(test_STS_SetTargetPosition_Out_Of_Range);
+    RUN_TEST(test_STS_SetTargetPosition_Broadcast_No_Wait);
+    RUN_TEST(test_STS_GetPresentPosition_Fragmented_Packet);
+    RUN_TEST(test_STS_GetPresentPosition_Bad_Checksum);
+    RUN_TEST(test_STS_GetPresentPosition_Zero_Length_Fault);
+    RUN_TEST(test_STS_GetPresentPosition_Buffer_Overflow_Guard);
+    RUN_TEST(test_STS_GetPresentPosition_Wrong_ID_Response);
 
 
     return UNITY_END();

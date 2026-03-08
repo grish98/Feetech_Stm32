@@ -3,7 +3,7 @@
  * @file           : sts_servo.h
  * @brief          : STS Service Layer and Hardware Abstraction Definitions
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
+ * @date           : 2026-03-08
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -27,6 +27,11 @@
 
 #define STS_ONLINE  1
 #define STS_OFFLINE 0
+
+#define STS_MAX_TX_BUFFER       128U
+#define STS_MAX_RX_BUFFER       128U
+#define STS_DEFAULT_TIMEOUT_MS  10U
+
 
 /* Forward declaration of the bus for the function pointers */
 typedef struct sts_bus_s sts_bus_t;

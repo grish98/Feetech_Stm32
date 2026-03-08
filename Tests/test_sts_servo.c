@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-06
+ * @date           : 2026-03-08
  * @version        : 0.2.0
  ******************************************************************************
 @details
@@ -111,12 +111,12 @@ static sts_servo_t test_servo;
 extern sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd);
 
 void setUp(void) {
-    /* 1. Completely wipe the globals to prevent state leakage */
+    /* Wipe the globals to prevent state leakage */
     memset(&test_bus, 0, sizeof(test_bus));
     memset(&test_servo, 0, sizeof(test_servo));
     memset(&dummy_uart_port, 0, sizeof(dummy_uart_port));
 
-    /* 2. Re-initialize from a clean slate */
+    /* Re-initialize */
     (void)STS_Bus_Init(&test_bus, &dummy_uart_port, mock_tx, mock_rx);
     (void)STS_Servo_Init(&test_servo, &test_bus, TEST_VALID_ID);
 }
@@ -423,24 +423,28 @@ void test_STS_Primitives_All_Hardware_Errors(void) {
 
 void test_STS_ExecuteCommand_Header_Corruption(void) {
     uint8_t val8;
-    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
-    
-    dummy_uart_port.rx_buffer[IDX_HEADER_START] = CORRUPT_HEADER_BYTE; 
-    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN; 
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {HW_STATUS_OK};
+
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_buffer[IDX_HEADER_START] = CORRUPT_HEADER_BYTE;
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_HEADER, STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &val8));
 }
 
 void test_STS_ExecuteCommand_Length_Mismatch(void) {
-    uint16_t actual_read_value;
-    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {HW_STATUS_OK, HW_STATUS_OK};
-    
-    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
-    
-    dummy_uart_port.rx_buffer[IDX_LENGTH_BYTE] = FAKE_LONG_PACKET_LENGTH; 
-    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN; 
+    // Set length field below the protocol minimum to triggerSTS_ERR_MALFORMED 
+    // from the stage 1 length validation guard. 
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x00U; // Below STS_MIN_PKT_LEN_VAL 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value));
+    uint16_t actual_read_value = 0U;
+    sts_result_t res = STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res);
 }
 
 void test_STS_ExecuteCommand_Standard_Write_Safety(void) {
@@ -505,9 +509,21 @@ void test_STS_ExecuteCommand_TrashBin_Redirect(void) {
 
 
 void test_STS_ExecuteCommand_RX_Buffer_Overflow(void) {
+    // Packet claims a length that exceeds the internal RX buffer. 
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU;
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
     sts_cmd_t cmd = {
-        .instruction      = STS_INST_READ,
-        .expected_rx_len  = (uint16_t)(TEST_MAX_RX_BUFFER + 10U), // Exceed internal bounds 
+        .instruction     = STS_INST_READ,
+        .tx_params       = NULL,
+        .tx_param_len    = 0U,
+        .expected_rx_len = (uint16_t)(STS_MAX_RX_BUFFER + 10U),
+        .rx_params_out   = NULL,
+        .rx_params_size  = 0U,
+        .rx_param_len_out = NULL
     };
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, sts_execute_command(&test_servo, &cmd));
@@ -729,4 +745,164 @@ void test_STS_SetTorqueEnable_Error_Propagation(void) {
     sts_result_t res = STS_SetTorqueEnable(&test_servo, 1U); 
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res);
+}
+
+void test_STS_Position_API_Null_Guards(void) {
+    uint16_t pos = 0U;
+    const uint16_t dummy_pos = 100U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetPosition(NULL, dummy_pos));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentPosition(NULL, &pos));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentPosition(&test_servo, NULL));
+}
+
+void test_STS_SetTargetPosition_Success(void) {
+    const uint16_t target_pos = 2048U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Hardware_Fault(void) {
+    const uint16_t target_pos = 2048U; 
+    const uint8_t hw_fault_code = STS_BIT_ERR_LOAD; 
+    
+    simulate_servo_response(TEST_VALID_ID, hw_fault_code, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res);
+}
+
+void test_STS_SetTargetPosition_Out_Of_Range(void) {
+    const uint16_t out_of_range_pos = 5000U;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, out_of_range_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetPosition_Broadcast_No_Wait(void) {
+    const uint16_t target_pos = 2048U;
+    
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+    dummy_uart_port.rx_call_count = 0U; // Reset counter to ensure no reads occur 
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    // Broadcast commands must return immediately without waiting for an ACK 
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT32(0U, dummy_uart_port.rx_call_count); 
+    
+    test_servo.id = TEST_VALID_ID;
+}
+
+void test_STS_GetPresentPosition_Success(void) {
+    const uint16_t expected_pos = 1024U; 
+  
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 
+        (uint8_t)(expected_pos & 0xFFU), 
+        (uint8_t)((expected_pos >> 8U) & 0xFFU) 
+    };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &actual_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(expected_pos, actual_pos);
+}
+
+void test_STS_GetPresentPosition_Endianness(void) {
+    const uint16_t endian_test_val = 511U; // 0x01FF in Hex 
+    
+    // map Low Byte (0xFF) then High Byte (0x01) 
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0xFFU, 0x01U };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &actual_pos);
+
+    //If bytes were read Big-Endian, this would equal 65281 (0xFF01) instead of 511 
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(endian_test_val, actual_pos);
+}
+
+void test_STS_GetPresentPosition_Fragmented_Packet(void) {
+    // Provide less data than required for a Stage 1 Read (Header + ID + Length) 
+    const uint16_t truncated_len = STS_PKT_FIXED_TOTAL - 1U; 
+    
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_len = truncated_len; 
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    //  The Stage 1 read should fail and return a Timeout 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
+}
+
+void test_STS_GetPresentPosition_Bad_Checksum(void) {
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U }; 
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    
+   //Intentionally flip the bits of the final Checksum byte */
+    const uint16_t checksum_idx = EXPECTED_READ16_ACK_LEN - 1U;
+    dummy_uart_port.rx_buffer[checksum_idx] ^= CORRUPT_CHECKSUM_MASK; 
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_CHECKSUM, res);
+}
+
+void test_STS_GetPresentPosition_Zero_Length_Fault(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x00U; // Violates STS_MIN_PKT_LEN_VAL 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res); 
+}
+
+void test_STS_GetPresentPosition_Buffer_Overflow_Guard(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU; //Claims 254 bytes, exceeding STS_MAX_RX_BUFFER 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, res);
+}
+
+void test_STS_GetPresentPosition_Wrong_ID_Response(void) {
+    const uint8_t wrong_id = TEST_ALT_ID; 
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
+    
+    simulate_servo_response(wrong_id, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_ID_MISMATCH, res);
 }

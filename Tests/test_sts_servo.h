@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.h
  * @brief          : Unit test declarations for the STS Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
+ * @date           : 2026-03-08
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -79,3 +79,16 @@ extern void test_STS_SetTorqueEnable_Disable(void);
 extern void test_STS_SetTorqueEnable_NonStandard_True(void);
 extern void test_STS_SetTorqueEnable_Null_Pointer(void);
 extern void test_STS_SetTorqueEnable_Error_Propagation(void);
+
+extern void test_STS_SetTargetPosition_Success(void);
+extern void test_STS_GetPresentPosition_Success(void);
+extern void test_STS_Position_API_Null_Guards(void);
+extern void test_STS_GetPresentPosition_Endianness(void);
+extern void test_STS_SetTargetPosition_Hardware_Fault(void);
+extern void test_STS_SetTargetPosition_Out_Of_Range(void);
+extern void test_STS_SetTargetPosition_Broadcast_No_Wait(void);
+extern void test_STS_GetPresentPosition_Fragmented_Packet(void);
+extern void test_STS_GetPresentPosition_Bad_Checksum(void);
+extern void test_STS_GetPresentPosition_Zero_Length_Fault(void);
+extern void test_STS_GetPresentPosition_Buffer_Overflow_Guard(void);
+extern void test_STS_GetPresentPosition_Wrong_ID_Response(void);

@@ -3,13 +3,16 @@
  * @file           : test_sts_utils.h
  * @brief          : Header for STS test support utilities
  * @author         : Grisham Balloo
- * @date           : 2026-03-03
+ * @date           : 2026-03-08
  * @version        : 1.1.0
  ******************************************************************************
  * @details
- * This file provides a shared testing harness for the STS driver. 
+  * This file provides a shared testing harness for the STS driver.
  * It includes:
  * 1. Hardware Mocks: Simulating UART peripherals and HAL function pointers.
+ *    mock_rx consumes rx_buffer incrementally to support multi-stage reads,
+ *    and both mock functions track call counts via rx_call_count and
+ *    tx_call_count for behavioural verification in tests.
  * 2. Protocol Simulators: Constructing raw byte streams to test the parser.
  *
  * @attention
@@ -29,20 +32,41 @@
 typedef struct {
     uint8_t rx_buffer[256]; /**< Buffer to hold fake responses */
     uint16_t rx_len;        /**< Number of bytes ready to be read */
+    uint32_t rx_call_count; /**< Track how many times RX was called */
+
+    uint8_t tx_buffer[256]; /**< Capture what the driver sends */
+    uint16_t tx_len;        /**< Length of captured TX data */
+    uint32_t tx_call_count; /**< Track how many times TX was called */
 } mock_uart_t;
 
-/* Extern declaration so all test files can point to the same 'hardware' */
 extern mock_uart_t dummy_uart_port;
 
-/** 
-* @brief Mock Transmit Function
- * This simulates a successful transmission over the bus.
+/**
+ * @brief Mock transmit function. Captures outgoing data into port->tx_buffer
+ *        and increments tx_call_count. Always returns STS_OK.
+ *
+ * @param[in]  bus   Bus handle with port_handle pointing to a mock_uart_t.
+ * @param[in]  data  Data buffer to transmit.
+ * @param[in]  len   Number of bytes to transmit.
+ *
+ * @return STS_OK on success.
+ * @return STS_ERR_NULL_PTR if bus, port_handle, or data is NULL.
  */
 sts_result_t mock_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len);
 
 /**
- * @brief Mock Receive Function
- * This simulates a successful reception over the bus.
+ * @brief Mock receive function. Consumes port->rx_buffer incrementally to
+ *        support multi-stage reads. Returns STS_ERR_TIMEOUT if fewer than
+ *        len bytes are available. Increments rx_call_count on each call.
+ *
+ * @param[in]  bus         Bus handle with port_handle pointing to a mock_uart_t.
+ * @param[out] data        Buffer to write received bytes into.
+ * @param[in]  len         Number of bytes to read.
+ * @param[in]  timeout_ms  Timeout in milliseconds (unused in mock).
+ *
+ * @return STS_OK on success.
+ * @return STS_ERR_NULL_PTR if bus, port_handle, or data is NULL.
+ * @return STS_ERR_TIMEOUT if port->rx_len is less than len.
  */
 sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms);
 
