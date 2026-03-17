@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-16
  * @version        : 0.2.0
  ******************************************************************************
 @details
@@ -849,7 +849,7 @@ void test_STS_GetPresentPosition_Fragmented_Packet(void) {
     uint16_t pos = 0U;
     sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
 
-    //  The Stage 1 read should fail and return a Timeout 
+    //Stage 1 read should fail and return a Timeout 
     TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
 }
 
@@ -857,7 +857,7 @@ void test_STS_GetPresentPosition_Bad_Checksum(void) {
     uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U }; 
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
     
-   //Intentionally flip the bits of the final Checksum byte */
+   //Intentionally flip the bits of the final Checksum byte 
     const uint16_t checksum_idx = EXPECTED_READ16_ACK_LEN - 1U;
     dummy_uart_port.rx_buffer[checksum_idx] ^= CORRUPT_CHECKSUM_MASK; 
     dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
@@ -885,7 +885,7 @@ void test_STS_GetPresentPosition_Buffer_Overflow_Guard(void) {
     dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
     dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
     dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
-    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU; //Claims 254 bytes, exceeding STS_MAX_RX_BUFFER 
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU; // exceeding STS_MAX_RX_BUFFER 
     dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
 
     uint16_t pos = 0U;
@@ -905,4 +905,86 @@ void test_STS_GetPresentPosition_Wrong_ID_Response(void) {
     sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_ID_MISMATCH, res);
+}
+
+void test_STS_SetTargetPosition_Min_Boundary(void) {
+    const uint16_t min_pos = 0U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, min_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Max_Boundary(void) {
+    const uint16_t max_pos = 4095U;
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, max_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Just_Out_Of_Range(void) {
+    const uint16_t off_by_one_pos = 4096U;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, off_by_one_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetPosition_Bus_Busy(void) {
+    const uint16_t target_pos = 2048U;
+    
+    test_bus.transmit = mock_tx_busy; 
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, res);
+
+    test_bus.transmit = mock_tx; 
+}
+
+void test_STS_GetPresentPosition_Broadcast_Forbidden(void) {
+    uint16_t pos = 0U;
+
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+
+    test_servo.id = TEST_VALID_ID;
+}
+
+void test_STS_GetPresentPosition_Payload_Length_Mismatch(void) {
+    const uint8_t short_payload_len = STS_DATA_LEN_8BIT; 
+    uint8_t pos_data[1] = { 0xFFU }; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, short_payload_len, dummy_uart_port.rx_buffer);
+    
+    dummy_uart_port.rx_len = STS_ACK_BASE_LEN + short_payload_len;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res);
+}
+
+void test_STS_GetPresentPosition_Stage2_Timeout(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x04U; 
+    
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL; 
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
 }

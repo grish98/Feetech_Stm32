@@ -3,7 +3,7 @@
  * @file           : test_runner_servo.c
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-16
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -89,7 +89,6 @@ int main(void) {
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
     RUN_TEST(test_STS_SetTorqueEnable_Error_Propagation);
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
-
     RUN_TEST(test_STS_GetPresentPosition_Success);
     RUN_TEST(test_STS_Position_API_Null_Guards);
     RUN_TEST(test_STS_GetPresentPosition_Endianness);
@@ -101,7 +100,13 @@ int main(void) {
     RUN_TEST(test_STS_GetPresentPosition_Zero_Length_Fault);
     RUN_TEST(test_STS_GetPresentPosition_Buffer_Overflow_Guard);
     RUN_TEST(test_STS_GetPresentPosition_Wrong_ID_Response);
-
+    RUN_TEST(test_STS_SetTargetPosition_Min_Boundary);
+    RUN_TEST(test_STS_SetTargetPosition_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetPosition_Bus_Busy);
+    RUN_TEST(test_STS_GetPresentPosition_Broadcast_Forbidden);
+    RUN_TEST(test_STS_GetPresentPosition_Payload_Length_Mismatch);
+    RUN_TEST(test_STS_GetPresentPosition_Stage2_Timeout);
+    RUN_TEST(test_STS_SetTargetPosition_Just_Out_Of_Range);
 
     return UNITY_END();
 }
