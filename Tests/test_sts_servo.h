@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.h
  * @brief          : Unit test declarations for the STS Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-16
+ * @date           : 2026-03-19
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -101,3 +101,22 @@ extern void test_STS_SetTargetPosition_Bus_Busy(void);
 extern void test_STS_GetPresentPosition_Broadcast_Forbidden(void);
 extern void test_STS_GetPresentPosition_Payload_Length_Mismatch(void);
 extern void test_STS_GetPresentPosition_Stage2_Timeout(void);
+
+extern void test_STS_Speed_Accel_Null_Guards(void);
+extern void test_STS_SetTargetSpeed_Success(void);
+extern void test_STS_SetTargetSpeed_Out_Of_Range(void);
+extern void test_STS_GetPresentSpeed_Success(void);
+extern void test_STS_SetTargetAcceleration_Success(void);
+extern void test_STS_SetTargetAcceleration_Out_Of_Range(void);
+extern void test_STS_SetTargetAcceleration_Max_Boundary(void);
+extern void test_STS_SetTargetSpeed_Max_Boundary(void);
+extern void test_STS_SetTargetSpeed_Min_Boundary(void);
+extern void test_STS_SetTargetAcceleration_Min_Boundary(void);
+extern void test_STS_SetTargetSpeed_Reverse_Direction_Allowed(void);
+extern void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void);
+
+extern void test_STS_SetOperatingMode_Null_Guard(void);
+extern void test_STS_SetOperatingMode_Success(void);
+extern void test_STS_SetOperatingMode_Invalid_Mode(void) ;
+
+

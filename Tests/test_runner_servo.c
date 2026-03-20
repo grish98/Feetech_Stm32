@@ -3,7 +3,7 @@
  * @file           : test_runner_servo.c
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-16
+ * @date           : 2026-03-19
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -108,5 +108,21 @@ int main(void) {
     RUN_TEST(test_STS_GetPresentPosition_Stage2_Timeout);
     RUN_TEST(test_STS_SetTargetPosition_Just_Out_Of_Range);
 
+    RUN_TEST(test_STS_Speed_Accel_Null_Guards);
+    RUN_TEST(test_STS_SetTargetSpeed_Success);
+    RUN_TEST(test_STS_SetTargetSpeed_Out_Of_Range);
+    RUN_TEST(test_STS_GetPresentSpeed_Success);
+    RUN_TEST(test_STS_SetTargetAcceleration_Success);
+    RUN_TEST(test_STS_SetTargetAcceleration_Out_Of_Range);
+    RUN_TEST(test_STS_SetTargetAcceleration_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetSpeed_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetSpeed_Reverse_Direction_Allowed);
+    
+    RUN_TEST(test_STS_SetOperatingMode_Null_Guard);
+    RUN_TEST(test_STS_SetOperatingMode_Success);
+    RUN_TEST(test_STS_SetOperatingMode_Invalid_Mode);
+  
+
+   
     return UNITY_END();
 }

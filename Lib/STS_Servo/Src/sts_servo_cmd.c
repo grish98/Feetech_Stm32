@@ -3,7 +3,7 @@
  * @file           : sts_servo_cmd.c
  * @brief          : STS Servo Command Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-19
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -22,7 +22,6 @@
 #include "sts_servo.h"
 #include "sts_registers.h"
 
-#define STS_MAX_POSITION    4095U
 
 sts_result_t STS_SetTorqueEnable(sts_servo_t *servo, uint8_t enable) {
     if (servo == NULL) {
@@ -31,6 +30,18 @@ sts_result_t STS_SetTorqueEnable(sts_servo_t *servo, uint8_t enable) {
 
     uint8_t value = (enable != 0U) ? STS_TORQUE_ENABLE : STS_TORQUE_DISABLE;
     return STS_Write8(servo, STS_REG_TORQUE_ENABLE, value);
+}
+
+sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    if (mode > STS_MODE_STEP) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    
+    return STS_Write8(servo, STS_REG_OPERATION_MODE, (uint8_t)mode);
 }
 
 sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint16_t position) {
@@ -50,3 +61,36 @@ sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out) 
     }
     return STS_Read16(servo, STS_REG_PRESENT_POSITION, position_out);
 }
+
+sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    uint16_t magnitude = speed & STS_SPEED_MAGNITUDE_MASK; 
+    if (magnitude > STS_MAX_SPEED) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    
+    uint16_t reg_val = magnitude | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+
+    return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
+}
+
+sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, uint16_t *speed_out) {
+    if (servo == NULL || speed_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    return STS_Read16(servo, STS_REG_PRESENT_SPEED, speed_out);
+}
+
+sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (acceleration > STS_MAX_ACCELERATION) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    return STS_Write8(servo, STS_REG_ACCELERATION, acceleration);
+}
+

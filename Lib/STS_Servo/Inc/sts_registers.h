@@ -3,7 +3,7 @@
  * @file           : sts_registers.h
  * @brief          : Feetech STS Series Register Map and Instruction Set
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
+ * @date           : 2026-03-19
  * @version        : 1.0.0
  ******************************************************************************
  * @details
@@ -107,4 +107,10 @@
 /** @} */
 
 
-
+/** * @name Speed Register Bitmasks (Addresses 0x2E and 0x3A)
+ * @brief Masks for parsing target and present speed registers.
+ * @{ 
+ */
+#define STS_SPEED_DIRECTION_BIT   0x8000U  /**< Bit 15: 0 = CCW (Forward), 1 = CW (Reverse) */
+#define STS_SPEED_MAGNITUDE_MASK  0x7FFFU  /**< Bits 0-14: Raw speed magnitude value */
+/** @} */

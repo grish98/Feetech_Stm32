@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-16
+ * @date           : 2026-03-19
  * @version        : 0.2.0
  ******************************************************************************
 @details
@@ -987,4 +987,152 @@ void test_STS_GetPresentPosition_Stage2_Timeout(void) {
     sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
+}
+
+void test_STS_Speed_Accel_Null_Guards(void) {
+    uint16_t speed = 0U;
+    const uint16_t dummy_speed = 1000U;
+    const uint8_t dummy_accel = 50U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetSpeed(NULL, dummy_speed, STS_DIR_CCW));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentSpeed(NULL, &speed));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentSpeed(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetAcceleration(NULL, dummy_accel));
+}
+
+void test_STS_SetTargetSpeed_Success(void) {
+    const uint16_t target_speed = 2000U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, target_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Out_Of_Range(void) {
+    const uint16_t out_of_range_speed = STS_MAX_SPEED + 1U;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, out_of_range_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_GetPresentSpeed_Success(void) {
+    const uint16_t expected_speed = 1500U; 
+  
+    uint8_t speed_data[STS_DATA_LEN_16BIT] = { 
+        (uint8_t)(expected_speed & 0xFFU), 
+        (uint8_t)((expected_speed >> 8U) & 0xFFU) 
+    };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, speed_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_speed = 0U;
+    sts_result_t res = STS_GetPresentSpeed(&test_servo, &actual_speed);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(expected_speed, actual_speed);
+}
+
+void test_STS_SetTargetAcceleration_Success(void) {
+    const uint8_t target_accel = 50U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, target_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Out_Of_Range(void) {
+    const uint16_t out_of_range_accel = STS_MAX_ACCELERATION + 1U;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, (uint8_t)out_of_range_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetSpeed_Max_Boundary(void) {
+    const uint16_t max_speed = STS_MAX_SPEED; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, max_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Max_Boundary(void) {
+    const uint8_t max_accel = STS_MAX_ACCELERATION; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, max_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Min_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, 0U, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Min_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, 0U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Reverse_Direction_Allowed(void) {
+    const uint16_t valid_speed = 1000U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, valid_speed, STS_DIR_CW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, STS_MAX_SPEED, STS_DIR_CW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetOperatingMode_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetOperatingMode(NULL, STS_MODE_POSITION));
+}
+
+void test_STS_SetOperatingMode_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetOperatingMode(&test_servo, STS_MODE_SPEED);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetOperatingMode_Invalid_Mode(void) {
+    sts_operating_mode_t invalid_mode = (sts_operating_mode_t)4U;
+
+    sts_result_t res = STS_SetOperatingMode(&test_servo, invalid_mode);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
 }
