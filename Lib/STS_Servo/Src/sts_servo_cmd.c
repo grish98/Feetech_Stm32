@@ -66,14 +66,12 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    
-    uint16_t magnitude = speed & STS_SPEED_MAGNITUDE_MASK; 
-    if (magnitude > STS_MAX_SPEED) {
+   
+    if (speed > STS_MAX_SPEED) {
         return STS_ERR_INVALID_PARAM;
     }
     
-    uint16_t reg_val = magnitude | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
-
+    uint16_t reg_val = speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
 
@@ -94,3 +92,63 @@ sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration)
     return STS_Write8(servo, STS_REG_ACCELERATION, acceleration);
 }
 
+sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    if (pwm > STS_MAX_PWM) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    
+    uint16_t reg_val = pwm | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+    return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
+}
+
+sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction_t dir) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    
+    if (steps > STS_MAX_STEP) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    
+    uint16_t reg_val = steps | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+    return STS_Write16(servo, STS_REG_GOAL_POSITION, reg_val);
+}
+
+/**
+ * @brief Universal target command that routes data based on the current operating mode.
+ * @param servo Pointer to an initialised servo handle.
+ * @param target The target value (Pos: 0 to 4095. Speed/PWM/Step: Negative to Positive max limits).
+ * @return STS_OK on success, or specific error code.
+ */
+sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+
+    sts_direction_t dir = (target < 0) ? STS_DIR_CW : STS_DIR_CCW;
+    uint32_t magnitude  = (uint32_t)((target < 0) ? -target : target);
+
+    switch (servo->current_mode) {
+        case STS_MODE_POSITION:
+            if (target < 0) {
+                target = 0;
+            }
+            return STS_SetTargetPosition(servo, (uint16_t)target);
+
+        case STS_MODE_SPEED:
+            return STS_SetTargetSpeed(servo, (uint16_t)magnitude, dir);
+
+        case STS_MODE_PWM:
+            return STS_SetTargetPWM(servo, (uint16_t)magnitude, dir);
+
+        case STS_MODE_STEP:
+            return STS_SetTargetStep(servo, (uint16_t)magnitude, dir);
+
+        default:
+            return STS_ERR_INVALID_PARAM;
+    }
+}

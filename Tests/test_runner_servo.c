@@ -117,12 +117,40 @@ int main(void) {
     RUN_TEST(test_STS_SetTargetAcceleration_Max_Boundary);
     RUN_TEST(test_STS_SetTargetSpeed_Max_Boundary);
     RUN_TEST(test_STS_SetTargetSpeed_Reverse_Direction_Allowed);
-    
+
     RUN_TEST(test_STS_SetOperatingMode_Null_Guard);
     RUN_TEST(test_STS_SetOperatingMode_Success);
     RUN_TEST(test_STS_SetOperatingMode_Invalid_Mode);
-  
 
-   
+    RUN_TEST(test_STS_PWM_Step_Null_Guards);
+    RUN_TEST(test_STS_SetTargetPWM_Out_Of_Range);
+    RUN_TEST(test_STS_SetTargetStep_Out_Of_Range);
+    RUN_TEST(test_STS_SetTargetPWM_Success);
+    RUN_TEST(test_STS_SetTargetStep_Success);
+    RUN_TEST(test_STS_SetTargetPWM_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetStep_Max_Boundary);
+    RUN_TEST(test_STS_SetTarget_Zero_Boundary);
+    RUN_TEST(test_STS_SetTargetStep_Zero_Boundary);
+    RUN_TEST(test_STS_SetTargetPWM_Zero_Boundary);
+    RUN_TEST(test_STS_SetTarget_SpeedMode_Min_Boundary);
+    RUN_TEST(test_STS_SetTarget_PWMMode_Min_Boundary);
+    RUN_TEST(test_STS_SetTarget_StepMode_Min_Boundary);
+    RUN_TEST(test_STS_SetTarget_SpeedMode_Negative_Out_Of_Range);
+    RUN_TEST(test_STS_SetTarget_PWMMode_Negative_Out_Of_Range);
+    RUN_TEST(test_STS_SetTarget_StepMode_Positive_Out_Of_Range);
+
+    RUN_TEST(test_STS_SetTarget_PositionMode_Normal);
+    RUN_TEST(test_STS_SetTarget_PositionMode_ClampsNegativeToZero);
+    RUN_TEST(test_STS_SetTarget_SpeedMode_Positive_CCW);
+    RUN_TEST(test_STS_SetTarget_SpeedMode_Negative_CW);
+    RUN_TEST(test_STS_SetTarget_SpeedMode_Out_Of_Range);
+    RUN_TEST(test_STS_SetTarget_PWMMode_Negative_CW);
+    RUN_TEST(test_STS_SetTarget_StepMode_Positive_CCW);
+    RUN_TEST(test_STS_SetTarget_InvalidMode);
+    RUN_TEST(test_STS_SetTarget_PWMMode_Out_Of_Range);
+    RUN_TEST(test_STS_SetTarget_StepMode_Out_Of_Range);
+    RUN_TEST(test_STS_SetTarget_PWMMode_Positive_CCW);
+    RUN_TEST(test_STS_SetTarget_StepMode_Negative_CW);
+
     return UNITY_END();
 }

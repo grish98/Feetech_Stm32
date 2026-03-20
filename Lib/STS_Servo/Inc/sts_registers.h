@@ -114,3 +114,15 @@
 #define STS_SPEED_DIRECTION_BIT   0x8000U  /**< Bit 15: 0 = CCW (Forward), 1 = CW (Reverse) */
 #define STS_SPEED_MAGNITUDE_MASK  0x7FFFU  /**< Bits 0-14: Raw speed magnitude value */
 /** @} */
+
+/**
+ * @brief Defines the active internal control algorithm (Operating Mode).
+ * Changing the operating mode fundamentally alters how the servo responds 
+ * to target commands. It rewires the internal control loop .
+ */
+typedef enum {
+    STS_MODE_POSITION = 0U, /**< Absolute position control via PID. Target speed acts as a travel limit. */
+    STS_MODE_SPEED    = 1U, /**< Continuous rotation velocity control. Absolute position commands are ignored. */
+    STS_MODE_PWM      = 2U, /**< Open-loop voltage control. PID is disabled; servo acts as a standard DC motor. */
+    STS_MODE_STEP     = 3U  /**< Relative position control. Moves a specified number of steps from the current location. */
+} sts_operating_mode_t;

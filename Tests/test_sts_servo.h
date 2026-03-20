@@ -117,6 +117,34 @@ extern void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void);
 
 extern void test_STS_SetOperatingMode_Null_Guard(void);
 extern void test_STS_SetOperatingMode_Success(void);
-extern void test_STS_SetOperatingMode_Invalid_Mode(void) ;
+extern void test_STS_SetOperatingMode_Invalid_Mode(void);
 
+extern void test_STS_PWM_Step_Null_Guards(void);
+extern void test_STS_SetTargetPWM_Out_Of_Range(void);
+extern void test_STS_SetTargetStep_Out_Of_Range(void);
+extern void test_STS_SetTargetPWM_Success(void);
+extern void test_STS_SetTargetStep_Success(void);
+extern void test_STS_SetTargetPWM_Max_Boundary(void);
+extern void test_STS_SetTargetStep_Max_Boundary(void);
+extern void test_STS_SetTarget_Zero_Boundary(void);
+void test_STS_SetTargetPWM_Zero_Boundary(void);
+void test_STS_SetTargetStep_Zero_Boundary(void);
+void test_STS_SetTarget_SpeedMode_Min_Boundary(void);
+void test_STS_SetTarget_PWMMode_Min_Boundary(void);
+void test_STS_SetTarget_StepMode_Min_Boundary(void);
+void test_STS_SetTarget_SpeedMode_Negative_Out_Of_Range(void);
+void test_STS_SetTarget_PWMMode_Negative_Out_Of_Range(void);
+void test_STS_SetTarget_StepMode_Positive_Out_Of_Range(void);
 
+extern void test_STS_SetTarget_PositionMode_Normal(void);
+extern void test_STS_SetTarget_PositionMode_ClampsNegativeToZero(void);
+extern void test_STS_SetTarget_SpeedMode_Positive_CCW(void);
+extern void test_STS_SetTarget_SpeedMode_Negative_CW(void);
+extern void test_STS_SetTarget_SpeedMode_Out_Of_Range(void);
+extern void test_STS_SetTarget_PWMMode_Negative_CW(void);
+extern void test_STS_SetTarget_StepMode_Positive_CCW(void);
+extern void test_STS_SetTarget_InvalidMode(void);
+extern void test_STS_SetTarget_PWMMode_Positive_CCW(void);
+extern void test_STS_SetTarget_StepMode_Negative_CW(void);
+extern void test_STS_SetTarget_PWMMode_Out_Of_Range(void);
+extern void test_STS_SetTarget_StepMode_Out_Of_Range(void);

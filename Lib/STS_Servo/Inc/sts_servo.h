@@ -3,7 +3,7 @@
  * @file           : sts_servo.h
  * @brief          : STS Service Layer and Hardware Abstraction Definitions
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-20
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -24,6 +24,7 @@
 #include "sts_protocol.h"
 #include <stdint.h>
 #include <stddef.h>
+#include "sts_registers.h"
 
 #define STS_ONLINE  1
 #define STS_OFFLINE 0
@@ -33,9 +34,10 @@
 #define STS_DEFAULT_TIMEOUT_MS  10U
 
 
+
 /* Forward declaration of the bus for the function pointers */
 typedef struct sts_bus_s sts_bus_t;
-
+typedef struct sts_servo_t sts_servo_t;
 /**
  * @brief Context-Aware HAL Function Pointers.
  * The bus itself is passed in, allowing the HAL to access the port_handle.
@@ -56,10 +58,11 @@ struct sts_bus_s {
  * @brief STS Servo Handle
  * Represents a single physical servo on the bus.
  */
-typedef struct {
+typedef struct sts_servo_t {
     sts_bus_t *bus;    /**< Pointer to the bus this servo is connected to */
     uint8_t id;        /**< Unique ID of the servo (0-253) */
     uint8_t is_online; /**< Connection status (STS_ONLINE/STS_OFFLINE) */
+    sts_operating_mode_t  current_mode;
 } sts_servo_t;
 
 /**

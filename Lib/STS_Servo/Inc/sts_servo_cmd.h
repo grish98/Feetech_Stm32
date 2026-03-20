@@ -43,6 +43,9 @@
  */
 #define STS_MAX_ACCELERATION    150U  
 
+#define STS_MAX_PWM     1000U  /**< Maximum open-loop PWM value  */
+#define STS_MAX_STEP    32767U /**< Maximum relative steps  */
+
 /** @} */
 
 /**
@@ -56,17 +59,6 @@ typedef enum {
     STS_DIR_CW  = 1U  /**< Clockwise  */
 } sts_direction_t;
 
-/**
- * @brief Defines the active internal control algorithm (Operating Mode).
- * Changing the operating mode fundamentally alters how the servo responds 
- * to target commands. It rewires the internal control loop .
- */
-typedef enum {
-    STS_MODE_POSITION = 0U, /**< Absolute position control via PID. Target speed acts as a travel limit. */
-    STS_MODE_SPEED    = 1U, /**< Continuous rotation velocity control. Absolute position commands are ignored. */
-    STS_MODE_PWM      = 2U, /**< Open-loop voltage control. PID is disabled; servo acts as a standard DC motor. */
-    STS_MODE_STEP     = 3U  /**< Relative position control. Moves a specified number of steps from the current location. */
-} sts_operating_mode_t;
 
 /**
  * @brief Enables or disables motor torque output.
@@ -130,3 +122,38 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
  * @return STS_OK on success, or specific sts_result_t error code.
  */
 sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration);
+
+/**
+ * @brief Universal target wrapper that automatically routes the command based on the servo's current operating mode.
+ * * @note This function safely handles sign extraction for directional modes (Speed, PWM, Step). 
+ * If the servo is in Position mode, negative targets are automatically clamped to 0.
+ * * @param servo Pointer to an initialised servo handle containing the current state.
+ * @param target The desired target value. Acceptable ranges depend on the active mode:
+ * - Position Mode: 0 to STS_MAX_POSITION
+ * - Speed Mode:    -STS_MAX_SPEED to +STS_MAX_SPEED
+ * - PWM Mode:      -STS_MAX_PWM to +STS_MAX_PWM
+ * - Step Mode:     -STS_MAX_STEP to +STS_MAX_STEP
+ * @return STS_OK on success, STS_ERR_NULL_PTR if servo is NULL, or STS_ERR_INVALID_PARAM if the target exceeds hardware limits.
+ */
+sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target);
+
+/**
+ * @brief Commands the servo to move a relative number of steps in a specific direction.
+ * * @note The servo must be configured in Step Mode (Mode 3) for this to take effect.
+ * * @param servo Pointer to an initialised servo handle.
+ * @param steps The raw number of relative steps to execute (0 to STS_MAX_STEP).
+ * @param dir The direction of rotation (STS_DIR_CW or STS_DIR_CCW).
+ * @return STS_OK on success, STS_ERR_NULL_PTR if servo is NULL, or STS_ERR_INVALID_PARAM if steps exceed STS_MAX_STEP.
+ */
+sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction_t dir);
+
+/**
+ * @brief Sets the open-loop PWM duty cycle (effort) applied to the motor coils.
+ * * @note The servo must be configured in PWM Mode (Mode 2) for this to take effect. 
+ * This acts as a pseudo-torque control by commanding a constant voltage percentage.
+ * * @param servo Pointer to an initialised servo handle.
+ * @param pwm The raw PWM effort value (0 to STS_MAX_PWM, where max usually represents 100% duty cycle).
+ * @param dir The direction to apply the driving force (STS_DIR_CW or STS_DIR_CCW).
+ * @return STS_OK on success, STS_ERR_NULL_PTR if servo is NULL, or STS_ERR_INVALID_PARAM if PWM exceeds STS_MAX_PWM.
+ */
+sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir);
