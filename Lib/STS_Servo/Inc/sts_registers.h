@@ -87,6 +87,7 @@
 #define STS_REG_ASYNC_WRITE_FLAG 0x40 /**< Status of buffered RegWrite */
 #define STS_REG_STATUS_ERROR     0x41 /**< Hardware error */
 #define STS_REG_MOVING_FLAG      0x42 /**< 1: Moving, 0: Target reached */
+#define STS_REG_TORQUE_LIMIT    0x30 /**< Dynamic output torque limit (2 bytes, 0-1000) */
 /** @} */
 
 /** * @name Hardware Error Bitmasks (Address 0x41)

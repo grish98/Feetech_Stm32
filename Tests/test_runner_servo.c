@@ -152,5 +152,11 @@ int main(void) {
     RUN_TEST(test_STS_SetTarget_PWMMode_Positive_CCW);
     RUN_TEST(test_STS_SetTarget_StepMode_Negative_CW);
 
+    RUN_TEST(test_STS_SetTorqueLimit_Null_Guard);
+    RUN_TEST(test_STS_SetTorqueLimit_Out_Of_Range);
+    RUN_TEST(test_STS_SetTorqueLimit_Success);
+    RUN_TEST(test_STS_SetTorqueLimit_Max_Boundary);
+    RUN_TEST(test_STS_SetTorqueLimit_Zero_Boundary);
+
     return UNITY_END();
 }

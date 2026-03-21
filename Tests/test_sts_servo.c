@@ -119,6 +119,8 @@
 #define TARGET_INVALID_POS_STEP     35000
 #define TARGET_INVALID_STEP        (-35000)
 
+#define TARGET_VALID_TORQUE_LIMIT 500U
+
 /* ==========================================================================
  * Packet Corruption & Error Injection Constants
  * ========================================================================== */
@@ -1394,4 +1396,42 @@ void test_STS_SetTarget_InvalidMode(void) {
     test_servo.current_mode = (sts_operating_mode_t)INVALID_OPERATING_MODE; 
     sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_SPEED_CCW);
     TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+/* ==========================================================================
+ * TORQUE LIMIT COMMAND TESTS
+ * ========================================================================== */
+
+void test_STS_SetTorqueLimit_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTorqueLimit(NULL, TARGET_VALID_TORQUE_LIMIT));
+}
+
+void test_STS_SetTorqueLimit_Out_Of_Range(void) {
+    const uint16_t out_of_range_torque = STS_MAX_TORQUE + 1U;
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, out_of_range_torque);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTorqueLimit_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, TARGET_VALID_TORQUE_LIMIT);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueLimit_Max_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, STS_MAX_TORQUE);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueLimit_Zero_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, TARGET_ZERO);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
 }

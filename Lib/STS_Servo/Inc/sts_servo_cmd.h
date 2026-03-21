@@ -45,6 +45,7 @@
 
 #define STS_MAX_PWM     1000U  /**< Maximum open-loop PWM value  */
 #define STS_MAX_STEP    32767U /**< Maximum relative steps  */
+#define STS_MAX_TORQUE 1000U
 
 /** @} */
 
@@ -157,3 +158,5 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
  * @return STS_OK on success, STS_ERR_NULL_PTR if servo is NULL, or STS_ERR_INVALID_PARAM if PWM exceeds STS_MAX_PWM.
  */
 sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir);
+
+sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit);

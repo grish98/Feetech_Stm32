@@ -118,12 +118,7 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
     return STS_Write16(servo, STS_REG_GOAL_POSITION, reg_val);
 }
 
-/**
- * @brief Universal target command that routes data based on the current operating mode.
- * @param servo Pointer to an initialised servo handle.
- * @param target The target value (Pos: 0 to 4095. Speed/PWM/Step: Negative to Positive max limits).
- * @return STS_OK on success, or specific error code.
- */
+
 sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
@@ -151,4 +146,14 @@ sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
         default:
             return STS_ERR_INVALID_PARAM;
     }
+}
+
+sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (limit > STS_MAX_TORQUE) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    return STS_Write16(servo, STS_REG_TORQUE_LIMIT, limit);
 }
