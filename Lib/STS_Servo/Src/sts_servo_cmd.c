@@ -189,3 +189,27 @@ sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out) {
     }
     return STS_Read8(servo, STS_REG_MOVING_FLAG, status_out);
 }
+
+
+sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    uint8_t value = (lock != EEPROM_UNLOCK) ? EEPROM_LOCK : EEPROM_UNLOCK;
+    return STS_Write8(servo, STS_REG_LOCK, value);
+}
+
+sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (new_id > STS_ID_BROADCAST_SYNC) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    
+    /* * Note: The user MUST call STS_UnlockEEPROM() before calling this, 
+     * and STS_LockEEPROM() immediately after. We do not bundle them here 
+     * to prevent accidental flash wear if this function is misused.
+     */
+    return STS_Write8(servo, STS_REG_ID, new_id);
+}

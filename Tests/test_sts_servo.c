@@ -136,6 +136,10 @@
 #define TEST_SENTINEL_GARBAGE_U8       99U    /* Used to verify variable was NOT overwritten */
 #define TEST_ZERO_RX_LEN               0U     /* Simulates disconnected line */
 
+/* EEPROM & ID Test Values */
+#define TEST_MOCK_NEW_ID           10U
+#define TEST_MOCK_GARBAGE_LOCK     255U /* Used to prove the ternary operator sanitizes input */
+
 /* ==========================================================================
  * Packet Corruption & Error Injection Constants
  * ========================================================================== */
@@ -1536,4 +1540,46 @@ void test_STS_Telemetry_Preserves_State_On_Timeout(void) {
     sts_result_t res = STS_GetPresentVoltage(&test_servo, &voltage_out);
     TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res); 
     TEST_ASSERT_EQUAL_UINT8(TEST_SENTINEL_GARBAGE_U8, voltage_out); 
+}
+
+/* ==========================================================================
+ * EEPROM & ID CONFIGURATION COMMAND TESTS
+ * ========================================================================== */
+
+void test_STS_SetEEPROMLock_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetEEPROMLock(NULL, EEPROM_LOCK));
+}
+
+void test_STS_SetEEPROMLock_States(void) {
+
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_UNLOCK));
+    
+
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_LOCK));
+
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, TEST_MOCK_GARBAGE_LOCK));
+}
+
+void test_STS_SetID_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetID(NULL, TEST_MOCK_NEW_ID));
+}
+
+void test_STS_SetID_Out_Of_Range(void) {
+    const uint8_t invalid_id = STS_ID_BROADCAST_SYNC + 1U;
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetID(&test_servo, invalid_id));
+}
+
+void test_STS_SetID_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetID(&test_servo, TEST_MOCK_NEW_ID));
 }

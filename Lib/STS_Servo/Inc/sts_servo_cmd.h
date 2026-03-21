@@ -47,6 +47,9 @@
 #define STS_MAX_STEP    32767U /**< Maximum relative steps  */
 #define STS_MAX_TORQUE 1000U
 
+#define EEPROM_UNLOCK             0U
+#define EEPROM_LOCK               1U
+
 /** @} */
 
 /**
@@ -203,3 +206,27 @@ sts_result_t STS_GetPresentTemperature(sts_servo_t *servo, uint8_t *temp_out);
  * @return STS_OK on success, or specific error code.
  */
 sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out);
+
+/**
+ * @brief Toggles the EEPROM write protection.
+ * @note Must be unlocked (0) before modifying registers 0x00 to 0x20, 
+ * and immediately locked (1) afterward to prevent flash corruption.
+ * @param servo Pointer to initialized servo handle.
+ * @param lock 1 to enable write protection, 0 to disable.
+ * @return STS_OK on success, or standard error code.
+ */
+sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock);
+
+/**
+ * @brief Assigns a new permanent ID to the servo.
+ * @note EEPROM must be unlocked prior to calling. Changes take effect immediately.
+ *
+ * @warning DANGER: This function unlocks the EEPROM. 
+ * Repeated writes to EEPROM registers will PERMANENTLY DAMAGE the servo hardware.
+ * Use only for one-time configuration or calibration.
+ *
+ * @param servo Pointer to initialized servo handle.
+ * @param new_id The new ID (0-253).
+ * @return STS_OK on success, STS_ERR_INVALID_PARAM if ID > 254.
+ */
+sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id);

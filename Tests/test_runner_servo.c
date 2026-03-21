@@ -169,5 +169,12 @@ int main(void) {
     RUN_TEST(test_STS_Telemetry_Preserves_State_On_Timeout);
 
 
+    printf("\n--- STS EEPROM & ID Config Tests ---\n");
+    RUN_TEST(test_STS_SetEEPROMLock_Null_Guard);
+    RUN_TEST(test_STS_SetEEPROMLock_States);
+    RUN_TEST(test_STS_SetID_Null_Guard);
+    RUN_TEST(test_STS_SetID_Out_Of_Range);
+    RUN_TEST(test_STS_SetID_Success);
+
     return UNITY_END();
 }

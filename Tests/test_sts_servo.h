@@ -162,3 +162,10 @@ extern void test_STS_GetPresentTemperature_Success(void);
 extern void test_STS_GetMovingStatus_Success(void);
 extern void test_STS_Telemetry_Bubbles_Hardware_Error(void); 
 extern void test_STS_Telemetry_Preserves_State_On_Timeout(void);
+
+extern void test_STS_SetEEPROMLock_Null_Guard(void);
+extern void test_STS_SetEEPROMLock_States(void);
+extern void test_STS_SetID_Null_Guard(void);
+extern void test_STS_SetID_Out_Of_Range(void);
+extern void test_STS_SetID_Success(void);
+
