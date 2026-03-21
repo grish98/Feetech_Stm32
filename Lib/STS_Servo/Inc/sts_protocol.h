@@ -3,7 +3,7 @@
  * @file           : sts_protocol.h
  * @brief          : Feetech STS Servo Protocol API
  * @author         : Grisham Balloo
- * @date           : 2026-02-28
+ * @date           : 2026-03-8
  * @version        : 1.2.0
  ******************************************************************************
  * @details
@@ -35,10 +35,10 @@
 #define STS_HEADER                0xFFU
 #define STS_HEADER_SIZE           2U
 #define STS_CHECKSUM_SIZE         1U
-#define STS_LENGTH_FIXED_OVERHEAD 2U   /* ID + Checksum  */
+#define STS_LENGTH_FIXED_OVERHEAD 2U   /* ID + Checksum */
 #define STS_PKT_FIXED_TOTAL       4U   /* Header(2) + ID(1) + Length(1) */
 #define STS_MIN_PACKET_SIZE       6U   /* Header(2)+ID(1)+Len(1)+Inst(1)+CS(1) */
-#define STS_MAX_PACKET_SIZE       255U /* Max total size including headers and checksum */
+#define STS_MAX_PACKET_SIZE       255U /* Max total byte limit */
 
 /* --- Packet Layout Indices --- */
 #define STS_IDX_HEADER_1          0U
@@ -53,9 +53,19 @@
 #define STS_MAX_ID                254U
 #define STS_MAX_PARAM_LEN         253U
 #define STS_HARDWARE_OK           0x00U
-#define STS_MAX_INSTRUCTION       0x05U /* Valid range: 0x01 (Ping) to 0x05 (Reset) */
+#define STS_MAX_INSTRUCTION       0x05U /* Range: 0x01 (Ping) to 0x05 (Reset) */
+#define STS_MIN_PKT_LEN_VAL       2U    /* Min 'Length' byte: Status + Checksum */
 
+/* --- Protocol Element Sizes --- */
+#define STS_ACK_BASE_LEN          6U  
+#define STS_REG_ADDR_LEN          1U  
+#define STS_DATA_LEN_8BIT         1U  
+#define STS_DATA_LEN_16BIT        2U  
 
+/* --- Derived Parameter Lengths --- */
+#define STS_WRITE8_PARAM_LEN      (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U */
+#define STS_WRITE16_PARAM_LEN     (STS_REG_ADDR_LEN + STS_DATA_LEN_16BIT)  /* 3U */
+#define STS_READ_CMD_PARAM_LEN    (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U */
 /**
  * @brief Return codes for STS protocol operations.
  */

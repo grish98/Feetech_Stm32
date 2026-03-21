@@ -3,8 +3,8 @@
  * @file           : sts_servo.c
  * @brief          : STS Service Layer Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
- * @version        : 0.2.0
+ * @date           : 2026-03-08
+ * @version        : 0.3.0
  ******************************************************************************
  * @details
  * This module implements the high-level service functions for the Feetech STS
@@ -13,13 +13,20 @@
  *
  * - Bus HAL: STS_Bus_Init maps platform transmit/receive function pointers
  *   onto a shared bus handle.
+ *
  * - Servo Handle: STS_Servo_Init binds a servo ID to a bus and initialises
  *   online state to offline.
+ *
  * - Command Engine: sts_execute_command (STATIC_TESTABLE) is the single
- *   transaction path — handles framing, TX, RX, and response parsing with
- *   internal buffer overflow guards and broadcast early-exit logic.
+ *   transaction path — handles framing, TX, and a two-stage receive. Stage 1
+ *   reads the fixed header to extract the packet length field. Stage 2 reads
+ *   the remaining payload. The length field is validated against the minimum,
+ *   RX buffer limit, and cmd->expected_rx_len before Stage 2 is attempted.
+ *   Broadcast IDs and expected_rx_len == 0 skip the receive entirely.
+ *
  * - Ping: STS_servo_ping issues a PING instruction and updates is_online,
  *   distinguishing communication failures from servo hardware errors.
+ *
  * - Register Primitives: STS_Write8, STS_Write16, STS_Read8, STS_Read16
  *   provide typed register access built on the command engine.
  *
@@ -38,37 +45,23 @@
     #define STATIC_TESTABLE static
 #endif
 
-/* ==========================================================================
- * STS Configuration & Limits
- * ========================================================================== */
-#define STS_MAX_TX_BUFFER       128U
-#define STS_MAX_RX_BUFFER       128U
-#define STS_DEFAULT_TIMEOUT_MS  10U
-
-/* ==========================================================================
- * STS Protocol Framing & Sizing
- * ========================================================================== */
-/* Packet Overhead: 2 Header + 1 ID + 1 Length + 1 Status + 1 Checksum */
-#define STS_ACK_BASE_LEN        6U  
-
-/* Base sizes for protocol elements */
-#define STS_REG_ADDR_LEN        1U  /* Register addresses are always 1 byte */
-#define STS_DATA_LEN_8BIT       1U  /* 8-bit data payload */
-#define STS_DATA_LEN_16BIT      2U  /* 16-bit data payload */
-
-/* --- Derived Command Parameter Lengths --- 
- * TX Params for Read/Write commands always consist of the Register Address 
- * followed by the Data (or the Length of data to read).
- */
-#define STS_WRITE8_PARAM_LEN    (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U */
-#define STS_WRITE16_PARAM_LEN   (STS_REG_ADDR_LEN + STS_DATA_LEN_16BIT)  /* 3U */
-#define STS_READ_CMD_PARAM_LEN  (STS_REG_ADDR_LEN + STS_DATA_LEN_8BIT)   /* 2U (Address + Length byte) */
 
 /**
- * @brief  Core command execution engine. Handles framing, TX, RX, and parsing safely.
- * @param  servo Pointer to the servo handle.
- * @param  cmd   Pointer to the command configuration struct.
- * @return STS_OK on success, or specific sts_result_t error code.
+ * @brief  Single transaction path for all STS servo commands.
+ *
+ * @details
+ * Frames and transmits a command packet, then performs a two-stage receive:
+ * Stage 1 reads the fixed header to extract the packet length field.
+ * Stage 2 reads the remaining payload. The length field is validated against
+ * STS_MIN_PKT_LEN_VAL, the RX buffer limit, and cmd->expected_rx_len before
+ * Stage 2 is attempted. Skips RX entirely on broadcast IDs or expected_rx_len == 0.
+ *
+ * @note Not thread-safe. Add mutex protection here for RTOS support.
+ *
+ * @param  servo  Pointer to an initialised servo handle.
+ * @param  cmd    Pointer to the command configuration struct.
+ *
+ * @return STS_OK or specific error code
  */
 STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd) {
     if (servo == NULL || cmd == NULL || servo->bus == NULL) {
@@ -76,9 +69,6 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
     }
     if (servo->bus->transmit == NULL || servo->bus->receive == NULL) {
         return STS_ERR_NULL_PTR;
-    }
-    if (cmd->expected_rx_len > STS_MAX_RX_BUFFER) {
-        return STS_ERR_BUF_TOO_SMALL; 
     }
     if (cmd->tx_param_len > (STS_MAX_TX_BUFFER - STS_MIN_PACKET_SIZE)) {
         return STS_ERR_BUF_TOO_SMALL;
@@ -92,8 +82,8 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
     static uint8_t trash_bin[STS_MAX_RX_BUFFER];
     static uint16_t dummy_len;
 
-    (void)memset(tx_buf, 0, sizeof(tx_buf));
-    sts_result_t res = sts_create_packet(servo->id, cmd->instruction, cmd->tx_params, 
+   (void)memset(tx_buf, 0, sizeof(tx_buf));
+    sts_result_t res = sts_create_packet(servo->id, cmd->instruction, cmd->tx_params,
                                          cmd->tx_param_len, tx_buf, sizeof(tx_buf));
     if (res != STS_OK) {
         return res;
@@ -110,16 +100,37 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
     }
 
     (void)memset(rx_buf, 0, sizeof(rx_buf));
-    res = servo->bus->receive(servo->bus, rx_buf, cmd->expected_rx_len, STS_DEFAULT_TIMEOUT_MS);
+
+    res = servo->bus->receive(servo->bus, rx_buf, STS_PKT_FIXED_TOTAL, STS_DEFAULT_TIMEOUT_MS);
     if (res != STS_OK) {
         return res;
     }
 
-    uint8_t *safe_out  = (cmd->rx_params_out != NULL) ? cmd->rx_params_out : trash_bin;
-    uint16_t safe_size = (cmd->rx_params_out != NULL) ? cmd->rx_params_size : (uint16_t)sizeof(trash_bin);
-    uint16_t *safe_len = (cmd->rx_param_len_out != NULL) ? cmd->rx_param_len_out : &dummy_len;
+    uint8_t packet_len = rx_buf[STS_IDX_LENGTH];
+    if (packet_len < STS_MIN_PKT_LEN_VAL) {
+        return STS_ERR_MALFORMED;
+    }
 
-    return sts_parse_response(servo->id, rx_buf, cmd->expected_rx_len, 
+    uint16_t total_expected_size = (uint16_t)STS_PKT_FIXED_TOTAL + (uint16_t)packet_len;
+    if (total_expected_size > STS_MAX_RX_BUFFER) {
+        return STS_ERR_BUF_TOO_SMALL;
+    }
+
+    if (total_expected_size != cmd->expected_rx_len) {
+        return STS_ERR_MALFORMED;
+    }
+
+    res = servo->bus->receive(servo->bus, &rx_buf[STS_PKT_FIXED_TOTAL],
+                              (uint16_t)packet_len, STS_DEFAULT_TIMEOUT_MS);
+    if (res != STS_OK) {
+        return res;
+    }
+
+    uint8_t  *safe_out  = (cmd->rx_params_out    != NULL) ? cmd->rx_params_out    : trash_bin;
+    uint16_t  safe_size = (cmd->rx_params_out    != NULL) ? cmd->rx_params_size   : (uint16_t)sizeof(trash_bin);
+    uint16_t *safe_len  = (cmd->rx_param_len_out != NULL) ? cmd->rx_param_len_out : &dummy_len;
+
+    return sts_parse_response(servo->id, rx_buf, total_expected_size,
                               safe_out, safe_size, safe_len);
 }
 

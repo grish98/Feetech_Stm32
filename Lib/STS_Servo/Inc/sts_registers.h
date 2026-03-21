@@ -3,7 +3,7 @@
  * @file           : sts_registers.h
  * @brief          : Feetech STS Series Register Map and Instruction Set
  * @author         : Grisham Balloo
- * @date           : 2026-02-22
+ * @date           : 2026-03-19
  * @version        : 1.0.0
  ******************************************************************************
  * @details
@@ -87,6 +87,7 @@
 #define STS_REG_ASYNC_WRITE_FLAG 0x40 /**< Status of buffered RegWrite */
 #define STS_REG_STATUS_ERROR     0x41 /**< Hardware error */
 #define STS_REG_MOVING_FLAG      0x42 /**< 1: Moving, 0: Target reached */
+#define STS_REG_TORQUE_LIMIT    0x30 /**< Dynamic output torque limit (2 bytes, 0-1000) */
 /** @} */
 
 /** * @name Hardware Error Bitmasks (Address 0x41)
@@ -107,4 +108,22 @@
 /** @} */
 
 
+/** * @name Speed Register Bitmasks (Addresses 0x2E and 0x3A)
+ * @brief Masks for parsing target and present speed registers.
+ * @{ 
+ */
+#define STS_SPEED_DIRECTION_BIT   0x8000U  /**< Bit 15: 0 = CCW (Forward), 1 = CW (Reverse) */
+#define STS_SPEED_MAGNITUDE_MASK  0x7FFFU  /**< Bits 0-14: Raw speed magnitude value */
+/** @} */
 
+/**
+ * @brief Defines the active internal control algorithm (Operating Mode).
+ * Changing the operating mode fundamentally alters how the servo responds 
+ * to target commands. It rewires the internal control loop .
+ */
+typedef enum {
+    STS_MODE_POSITION = 0U, /**< Absolute position control via PID. Target speed acts as a travel limit. */
+    STS_MODE_SPEED    = 1U, /**< Continuous rotation velocity control. Absolute position commands are ignored. */
+    STS_MODE_PWM      = 2U, /**< Open-loop voltage control. PID is disabled; servo acts as a standard DC motor. */
+    STS_MODE_STEP     = 3U  /**< Relative position control. Moves a specified number of steps from the current location. */
+} sts_operating_mode_t;

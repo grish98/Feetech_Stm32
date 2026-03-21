@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.h
  * @brief          : Unit test declarations for the STS Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-05
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -17,7 +17,7 @@
 #pragma once
 #include "sts_servo.h"
 
-/* --- Bus Initialization Tests --- */
+/* --- Bus Initialisation Tests --- */
 extern void test_STS_Bus_Init_Success(void);
 extern void test_STS_Bus_Init_Null_Bus(void);
 extern void test_STS_Bus_Init_Null_TX(void);
@@ -27,7 +27,7 @@ extern void test_STS_Bus_Init_Overwrites_Garbage(void);
 extern void test_STS_Bus_Init_Reinitialization(void);
 extern void test_STS_Bus_Interface_Execution(void);
 
-/* --- Servo Initialization Tests --- */
+/* --- Servo Initialisation Tests --- */
 extern void test_STS_Servo_Init_Success(void);
 extern void test_STS_Servo_Init_Null_Servo(void);
 extern void test_STS_Servo_Init_Null_Bus(void);
@@ -73,3 +73,106 @@ extern void test_STS_Ping_Null_Bus_Pointer(void);
 extern void test_STS_Ping_Hardware_Error_Still_Online(void);
 extern void test_STS_Ping_Max_Valid_ID(void);
 extern void test_STS_Ping_Recovery_Offline_To_Online(void);
+
+/* --- Servo Torque Tests --- */
+extern void test_STS_SetTorqueEnable_Success(void);
+extern void test_STS_SetTorqueEnable_Disable(void);
+extern void test_STS_SetTorqueEnable_NonStandard_True(void);
+extern void test_STS_SetTorqueEnable_Null_Pointer(void);
+extern void test_STS_SetTorqueEnable_Error_Propagation(void);
+
+/* --- Servo Position Tests --- */
+extern void test_STS_SetTargetPosition_Success(void);
+extern void test_STS_GetPresentPosition_Success(void);
+extern void test_STS_Position_API_Null_Guards(void);
+extern void test_STS_GetPresentPosition_Endianness(void);
+extern void test_STS_SetTargetPosition_Hardware_Fault(void);
+extern void test_STS_SetTargetPosition_Out_Of_Range(void);
+extern void test_STS_SetTargetPosition_Just_Out_Of_Range(void);
+extern void test_STS_SetTargetPosition_Broadcast_No_Wait(void);
+extern void test_STS_GetPresentPosition_Fragmented_Packet(void);
+extern void test_STS_GetPresentPosition_Bad_Checksum(void);
+extern void test_STS_GetPresentPosition_Zero_Length_Fault(void);
+extern void test_STS_GetPresentPosition_Buffer_Overflow_Guard(void);
+extern void test_STS_GetPresentPosition_Wrong_ID_Response(void);
+extern void test_STS_SetTargetPosition_Min_Boundary(void);
+extern void test_STS_SetTargetPosition_Max_Boundary(void);
+extern void test_STS_SetTargetPosition_Bus_Busy(void);
+extern void test_STS_GetPresentPosition_Broadcast_Forbidden(void);
+extern void test_STS_GetPresentPosition_Payload_Length_Mismatch(void);
+extern void test_STS_GetPresentPosition_Stage2_Timeout(void);
+
+/* --- STS Speed & Acceleration Tests --- */
+extern void test_STS_Speed_Accel_Null_Guards(void);
+extern void test_STS_SetTargetSpeed_Success(void);
+extern void test_STS_SetTargetSpeed_Out_Of_Range(void);
+extern void test_STS_GetPresentSpeed_Success(void);
+extern void test_STS_SetTargetAcceleration_Success(void);
+extern void test_STS_SetTargetAcceleration_Out_Of_Range(void);
+extern void test_STS_SetTargetAcceleration_Max_Boundary(void);
+extern void test_STS_SetTargetSpeed_Max_Boundary(void);
+extern void test_STS_SetTargetSpeed_Min_Boundary(void);
+extern void test_STS_SetTargetAcceleration_Min_Boundary(void);
+extern void test_STS_SetTargetSpeed_Reverse_Direction_Allowed(void);
+extern void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void);
+
+/* --- STS Operating Mode Tests --- */
+extern void test_STS_SetOperatingMode_Null_Guard(void);
+extern void test_STS_SetOperatingMode_Success(void);
+extern void test_STS_SetOperatingMode_Invalid_Mode(void);
+
+/* --- STS PWM & Step Control Tests --- */
+extern void test_STS_PWM_Step_Null_Guards(void);
+extern void test_STS_SetTargetPWM_Out_Of_Range(void);
+extern void test_STS_SetTargetStep_Out_Of_Range(void);
+extern void test_STS_SetTargetPWM_Success(void);
+extern void test_STS_SetTargetStep_Success(void);
+extern void test_STS_SetTargetPWM_Max_Boundary(void);
+extern void test_STS_SetTargetStep_Max_Boundary(void);
+extern void test_STS_SetTarget_Zero_Boundary(void);
+extern void test_STS_SetTargetPWM_Zero_Boundary(void);
+extern void test_STS_SetTargetStep_Zero_Boundary(void);
+extern void test_STS_SetTarget_SpeedMode_Min_Boundary(void);
+extern void test_STS_SetTarget_PWMMode_Min_Boundary(void);
+extern void test_STS_SetTarget_StepMode_Min_Boundary(void);
+extern void test_STS_SetTarget_SpeedMode_Negative_Out_Of_Range(void);
+extern void test_STS_SetTarget_PWMMode_Negative_Out_Of_Range(void);
+extern void test_STS_SetTarget_StepMode_Positive_Out_Of_Range(void);
+
+/* --- STS Universal Target Routing Tests --- */
+extern void test_STS_SetTarget_PositionMode_Normal(void);
+extern void test_STS_SetTarget_PositionMode_ClampsNegativeToZero(void);
+extern void test_STS_SetTarget_SpeedMode_Positive_CCW(void);
+extern void test_STS_SetTarget_SpeedMode_Negative_CW(void);
+extern void test_STS_SetTarget_SpeedMode_Out_Of_Range(void);
+extern void test_STS_SetTarget_PWMMode_Negative_CW(void);
+extern void test_STS_SetTarget_StepMode_Positive_CCW(void);
+extern void test_STS_SetTarget_InvalidMode(void);
+extern void test_STS_SetTarget_PWMMode_Positive_CCW(void);
+extern void test_STS_SetTarget_StepMode_Negative_CW(void);
+extern void test_STS_SetTarget_PWMMode_Out_Of_Range(void);
+extern void test_STS_SetTarget_StepMode_Out_Of_Range(void);
+
+/* --- STS Torque Limit Tests --- */
+extern void test_STS_SetTorqueLimit_Null_Guard(void);
+extern void test_STS_SetTorqueLimit_Out_Of_Range(void);
+extern void test_STS_SetTorqueLimit_Success(void);
+extern void test_STS_SetTorqueLimit_Max_Boundary(void);
+extern void test_STS_SetTorqueLimit_Zero_Boundary(void);
+
+/* --- STS Telemetry Tests --- */
+extern void test_STS_Telemetry_Null_Guards(void);
+extern void test_STS_GetPresentLoad_Success(void);
+extern void test_STS_GetPresentVoltage_Success(void);
+extern void test_STS_GetPresentTemperature_Success(void);
+extern void test_STS_GetMovingStatus_Success(void);
+extern void test_STS_Telemetry_Bubbles_Hardware_Error(void); 
+extern void test_STS_Telemetry_Preserves_State_On_Timeout(void);
+
+/* --- STS EEPROM & ID Config Tests --- */
+extern void test_STS_SetEEPROMLock_Null_Guard(void);
+extern void test_STS_SetEEPROMLock_States(void);
+extern void test_STS_SetID_Null_Guard(void);
+extern void test_STS_SetID_Out_Of_Range(void);
+extern void test_STS_SetID_Success(void);
+

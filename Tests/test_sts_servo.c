@@ -3,35 +3,35 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-06
- * @version        : 0.2.0
+ * @date           : 2026-03-21
+ * @version        : 0.3.0
  ******************************************************************************
-@details
- * This test suite provides verification for the Feetech STS Service Layer
- * and Bus HAL implementation. It utilises the Unity Test Framework to
+ * @details
+ * This test suite provides verification for the Feetech STS Service Layer,
+ * Command API, and Bus HAL. It utilises the Unity Test Framework to
  * validate the following functional areas:
  *
- * 1. Bus Initialisation (8 tests): Validation of HAL function pointer mapping,
- *    deterministic memory overwrite, null-pointer guards, and re-initialisation
- *    safety across multiple hardware contexts.
+ * 1. Bus Initialisation: Validation of HAL function pointer mapping,
+ * deterministic memory overwrite, and null-pointer guards.
  *
- * 2. Servo Handle Initialisation (8 tests): Verification of ID boundary
- *    enforcement, state reset guarantees, atomic failure behaviour, and
- *    correct linkage across independent bus instances.
+ * 2. Servo Handle Initialisation: Verification of ID boundary enforcement,
+ * state reset guarantees, and multi-bus linkage.
  *
- * 3. Register Access Primitives (4 tests): Happy-path coverage for
- *    STS_Write8, STS_Write16, STS_Read8, and STS_Read16 against a
- *    simulated UART response.
+ * 3. Read/Write Primitives: Happy-path coverage for base registers.
  *
- * 4. Engine Robustness & Error Handling (11 tests): Stress-testing the
- *    sts_execute_command engine against null guards, bus faults, timeout,
- *    ID mismatch, checksum corruption, header corruption, malformed length
- *    fields, broadcast early-exit, and internal buffer overflow detection.
+ * 4. Engine Robustness: Stress-testing sts_execute_command against null guards,
+ * timeout, ID mismatch, checksum corruption, and buffer overflow.
  *
- * 5. Ping Service (11 tests): Verification of STS_servo_ping online/offline
- *    state management across success, timeout, ID mismatch, checksum error,
- *    bus busy, null guards, broadcast rejection, hardware error tolerance,
- *    boundary IDs, and offline-to-online recovery.
+ * 5. Ping Service: Online/offline state management and hardware error tolerance.
+ *
+ * 6. Kinematics & Motion Control: Exhaustive boundary testing for Position,
+ * Speed, Acceleration, PWM, and Step routing algorithms.
+ *
+ * 7. Telemetry & Feedback: Validation of load, voltage, temperature, and
+ * moving status polling, including timeout state preservation.
+ *
+ * 8. Configuration & EEPROM: Strict verification of EEPROM lock states,
+ * ternary boundary sanitisation, and valid ID assignments.
  *
  * @see Lib/STS_Servo/Inc/sts_servo.h for the target API documentation.
  *
@@ -45,17 +45,18 @@
 #include "sts_protocol.h"
 #include "sts_registers.h"
 #include "test_sts_utils.h"
+#include "sts_servo_cmd.h"
 #include <string.h>
 
 /* ==========================================================================
- * Test Environment & Buffer Limits
+ * TEST ENVIRONMENT & BUFFER LIMITS
  * ========================================================================== */
 #define TEST_MAX_TX_BUFFER          128U
 #define TEST_MAX_RX_BUFFER          128U
 #define TEST_TIMEOUT_MS             100U
 
 /* ==========================================================================
- * Mock Hardware & Identity Configurations
+ * MOCK HARDWARE & IDENTITY CONFIGURATIONS
  * ========================================================================== */
 #define MOCK_BUS_ADDR_A             ((void*)0x1111)
 #define MOCK_BUS_ADDR_B             ((void*)0x2222)
@@ -66,7 +67,7 @@
 #define TEST_MAX_ID                 253U
 
 /* ==========================================================================
- * Protocol Sizing & Expected Lengths
+ * PROTOCOL SIZING & EXPECTED LENGTHS
  * ========================================================================== */
 #define PAYLOAD_LEN_NONE            0U
 #define PAYLOAD_LEN_1_BYTE          1U
@@ -78,9 +79,10 @@
 #define EXPECTED_READ16_ACK_LEN     (6U + PAYLOAD_LEN_2_BYTES) /* 8U */
 
 /* ==========================================================================
- * Standard Test Data Values
+ * RAW BYTE & REGISTER TEST VALUES
  * ========================================================================== */
 #define HW_STATUS_OK                0x00U
+#define INVALID_OPERATING_MODE      99U
 
 #define TEST_DATA_BYTE              0xAAU
 #define TEST_DATA_LEN               1U
@@ -91,7 +93,55 @@
 #define TEST_VAL_16BIT_HIGH         0x12U  /* Little-endian upper byte */
 
 /* ==========================================================================
- * Packet Corruption & Error Injection Constants
+ * KINEMATIC TARGET BOUNDARIES & INTENTS
+ * ========================================================================== */
+#define TARGET_ZERO                 0
+
+/* --- Position Mode --- */
+#define TARGET_VALID_POS            2048
+#define TARGET_INVALID_NEG_POS     (-1500)
+
+/* --- Speed Mode --- */
+#define TARGET_VALID_SPEED_CCW      1000
+#define TARGET_VALID_SPEED_CW      (-1000)
+#define TARGET_INVALID_SPEED        5000
+#define TARGET_INVALID_NEG_SPEED   (-5000)
+
+/* --- PWM Mode --- */
+#define TARGET_VALID_PWM_CCW        500
+#define TARGET_VALID_PWM_CW        (-500)
+#define TARGET_INVALID_PWM          1500
+#define TARGET_INVALID_NEG_PWM     (-1500)
+
+/* --- Step Mode --- */
+#define TARGET_VALID_STEP_CCW       25000
+#define TARGET_VALID_STEP_CW       (-25000)
+#define TARGET_INVALID_POS_STEP     35000
+#define TARGET_INVALID_STEP        (-35000)
+
+#define TARGET_VALID_TORQUE_LIMIT   500U
+
+/* Mock Telemetry Expected Data */
+#define TEST_MOCK_LOAD_VAL          1000   /* Raw expected integer */
+#define TEST_MOCK_LOAD_LOW_BYTE     0xE8U  /* 1000 in Little Endian */
+#define TEST_MOCK_LOAD_HIGH_BYTE    0x03U
+
+#define TEST_MOCK_VOLTAGE_VAL       125U   /* Represents 12.5V */
+#define TEST_MOCK_TEMP_VAL          50U    /* Represents 50°C */
+#define TEST_MOCK_TEMP_OVERHEAT_VAL 85U    /* Represents 85°C */
+#define TEST_MOCK_STATUS_STOPPED    0U     /* Motor not moving */
+
+/* Sentinel Values for State Preservation Checks */
+#define TEST_SENTINEL_MAX_U8        255U   /* Used to verify variable was overwritten */
+#define TEST_SENTINEL_GARBAGE_U8    99U    /* Used to verify variable was NOT overwritten */
+#define TEST_ZERO_RX_LEN            0U     /* Simulates disconnected line */
+
+/* EEPROM & ID Test Values */
+#define TEST_MOCK_NEW_ID            10U
+#define TEST_MOCK_GARBAGE_LOCK      255U   
+
+/* ==========================================================================
+ * PACKET CORRUPTION & ERROR INJECTION CONSTANTS
  * ========================================================================== */
 /* Byte Indices in a standard STS Packet */
 #define IDX_HEADER_START            0U
@@ -104,18 +154,19 @@
 #define FAKE_LONG_PACKET_LENGTH     10U
 #define TRUNCATED_PACKET_LENGTH     2U
 
+
 static sts_bus_t test_bus;
 static sts_servo_t test_servo; 
 
 extern sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd);
 
 void setUp(void) {
-    /* 1. Completely wipe the globals to prevent state leakage */
+    /* Wipe the globals to prevent state leakage */
     memset(&test_bus, 0, sizeof(test_bus));
     memset(&test_servo, 0, sizeof(test_servo));
     memset(&dummy_uart_port, 0, sizeof(dummy_uart_port));
 
-    /* 2. Re-initialize from a clean slate */
+    /* Re-initialize */
     (void)STS_Bus_Init(&test_bus, &dummy_uart_port, mock_tx, mock_rx);
     (void)STS_Servo_Init(&test_servo, &test_bus, TEST_VALID_ID);
 }
@@ -422,24 +473,28 @@ void test_STS_Primitives_All_Hardware_Errors(void) {
 
 void test_STS_ExecuteCommand_Header_Corruption(void) {
     uint8_t val8;
-    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
-    
-    dummy_uart_port.rx_buffer[IDX_HEADER_START] = CORRUPT_HEADER_BYTE; 
-    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN; 
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {HW_STATUS_OK};
+
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_buffer[IDX_HEADER_START] = CORRUPT_HEADER_BYTE;
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_HEADER, STS_Read8(&test_servo, STS_REG_PRESENT_VOLTAGE, &val8));
 }
 
 void test_STS_ExecuteCommand_Length_Mismatch(void) {
-    uint16_t actual_read_value;
-    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {HW_STATUS_OK, HW_STATUS_OK};
-    
-    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
-    
-    dummy_uart_port.rx_buffer[IDX_LENGTH_BYTE] = FAKE_LONG_PACKET_LENGTH; 
-    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN; 
+    // Set length field below the protocol minimum to triggerSTS_ERR_MALFORMED 
+    // from the stage 1 length validation guard. 
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x00U; // Below STS_MIN_PKT_LEN_VAL 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value));
+    uint16_t actual_read_value = 0U;
+    sts_result_t res = STS_Read16(&test_servo, STS_REG_PRESENT_POSITION, &actual_read_value);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res);
 }
 
 void test_STS_ExecuteCommand_Standard_Write_Safety(void) {
@@ -504,9 +559,21 @@ void test_STS_ExecuteCommand_TrashBin_Redirect(void) {
 
 
 void test_STS_ExecuteCommand_RX_Buffer_Overflow(void) {
+    // Packet claims a length that exceeds the internal RX buffer. 
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU;
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
     sts_cmd_t cmd = {
-        .instruction      = STS_INST_READ,
-        .expected_rx_len  = (uint16_t)(TEST_MAX_RX_BUFFER + 10U), // Exceed internal bounds 
+        .instruction     = STS_INST_READ,
+        .tx_params       = NULL,
+        .tx_param_len    = 0U,
+        .expected_rx_len = (uint16_t)(STS_MAX_RX_BUFFER + 10U),
+        .rx_params_out   = NULL,
+        .rx_params_size  = 0U,
+        .rx_param_len_out = NULL
     };
 
     TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, sts_execute_command(&test_servo, &cmd));
@@ -683,3 +750,830 @@ void test_STS_Ping_Recovery_Offline_To_Online(void) {
     TEST_ASSERT_EQUAL_UINT8(STS_ONLINE, test_servo.is_online);
 }
 
+/* ==========================================================================
+ * TESTS: STS Puplic API 
+ * ========================================================================== */
+
+ void test_STS_SetTorqueEnable_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 1U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_Disable(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 0U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_NonStandard_True(void) {
+    simulate_servo_response(TEST_VALID_ID, HW_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 255U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueEnable_Null_Pointer(void) {
+    sts_result_t res = STS_SetTorqueEnable(NULL, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, res);
+}
+
+void test_STS_SetTorqueEnable_Error_Propagation(void) {
+    uint8_t mock_hardware_error = 0x20; 
+    simulate_servo_response(TEST_VALID_ID, mock_hardware_error, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN; 
+
+    sts_result_t res = STS_SetTorqueEnable(&test_servo, 1U); 
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res);
+}
+/* ==========================================================================
+ *  Possition COMMANDS
+ * ========================================================================== */
+
+void test_STS_Position_API_Null_Guards(void) {
+    uint16_t pos = 0U;
+    const uint16_t dummy_pos = 100U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetPosition(NULL, dummy_pos));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentPosition(NULL, &pos));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentPosition(&test_servo, NULL));
+}
+
+void test_STS_SetTargetPosition_Success(void) {
+    const uint16_t target_pos = 2048U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Hardware_Fault(void) {
+    const uint16_t target_pos = 2048U; 
+    const uint8_t hw_fault_code = STS_BIT_ERR_LOAD; 
+    
+    simulate_servo_response(TEST_VALID_ID, hw_fault_code, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res);
+}
+
+void test_STS_SetTargetPosition_Out_Of_Range(void) {
+    const uint16_t out_of_range_pos = 5000U;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, out_of_range_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetPosition_Broadcast_No_Wait(void) {
+    const uint16_t target_pos = 2048U;
+    
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+    dummy_uart_port.rx_call_count = 0U; // Reset counter to ensure no reads occur 
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    // Broadcast commands must return immediately without waiting for an ACK 
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT32(0U, dummy_uart_port.rx_call_count); 
+    
+    test_servo.id = TEST_VALID_ID;
+}
+
+void test_STS_GetPresentPosition_Success(void) {
+    const uint16_t expected_pos = 1024U; 
+  
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 
+        (uint8_t)(expected_pos & 0xFFU), 
+        (uint8_t)((expected_pos >> 8U) & 0xFFU) 
+    };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &actual_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(expected_pos, actual_pos);
+}
+
+void test_STS_GetPresentPosition_Endianness(void) {
+    const uint16_t endian_test_val = 511U; // 0x01FF in Hex 
+    
+    // map Low Byte (0xFF) then High Byte (0x01) 
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0xFFU, 0x01U };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &actual_pos);
+
+    //If bytes were read Big-Endian, this would equal 65281 (0xFF01) instead of 511 
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(endian_test_val, actual_pos);
+}
+
+void test_STS_GetPresentPosition_Fragmented_Packet(void) {
+    // Provide less data than required for a Stage 1 Read (Header + ID + Length) 
+    const uint16_t truncated_len = STS_PKT_FIXED_TOTAL - 1U; 
+    
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_len = truncated_len; 
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    //Stage 1 read should fail and return a Timeout 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
+}
+
+void test_STS_GetPresentPosition_Bad_Checksum(void) {
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U }; 
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    
+   //Intentionally flip the bits of the final Checksum byte 
+    const uint16_t checksum_idx = EXPECTED_READ16_ACK_LEN - 1U;
+    dummy_uart_port.rx_buffer[checksum_idx] ^= CORRUPT_CHECKSUM_MASK; 
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_CHECKSUM, res);
+}
+
+void test_STS_GetPresentPosition_Zero_Length_Fault(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x00U; // Violates STS_MIN_PKT_LEN_VAL 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res); 
+}
+
+void test_STS_GetPresentPosition_Buffer_Overflow_Guard(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0xFEU; // exceeding STS_MAX_RX_BUFFER 
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, res);
+}
+
+void test_STS_GetPresentPosition_Wrong_ID_Response(void) {
+    const uint8_t wrong_id = TEST_ALT_ID; 
+    uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
+    
+    simulate_servo_response(wrong_id, STS_STATUS_OK, pos_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_ID_MISMATCH, res);
+}
+
+void test_STS_SetTargetPosition_Min_Boundary(void) {
+    const uint16_t min_pos = 0U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, min_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Max_Boundary(void) {
+    const uint16_t max_pos = 4095U;
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, max_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPosition_Just_Out_Of_Range(void) {
+    const uint16_t off_by_one_pos = 4096U;
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, off_by_one_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetPosition_Bus_Busy(void) {
+    const uint16_t target_pos = 2048U;
+    
+    test_bus.transmit = mock_tx_busy; 
+
+    sts_result_t res = STS_SetTargetPosition(&test_servo, target_pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, res);
+
+    test_bus.transmit = mock_tx; 
+}
+
+void test_STS_GetPresentPosition_Broadcast_Forbidden(void) {
+    uint16_t pos = 0U;
+
+    test_servo.id = STS_ID_BROADCAST_SYNC;
+
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+
+    test_servo.id = TEST_VALID_ID;
+}
+
+void test_STS_GetPresentPosition_Payload_Length_Mismatch(void) {
+    const uint8_t short_payload_len = STS_DATA_LEN_8BIT; 
+    uint8_t pos_data[1] = { 0xFFU }; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos_data, short_payload_len, dummy_uart_port.rx_buffer);
+    
+    dummy_uart_port.rx_len = STS_ACK_BASE_LEN + short_payload_len;
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res);
+}
+
+void test_STS_GetPresentPosition_Stage2_Timeout(void) {
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_1] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_HEADER_2] = STS_HEADER;
+    dummy_uart_port.rx_buffer[STS_IDX_ID]       = TEST_VALID_ID;
+    dummy_uart_port.rx_buffer[STS_IDX_LENGTH]   = 0x04U; 
+    
+    dummy_uart_port.rx_len = STS_PKT_FIXED_TOTAL; 
+
+    uint16_t pos = 0U;
+    sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res);
+}
+
+/* ==========================================================================
+ *  Speed & Acceleratiion COMMANDS
+ * ========================================================================== */
+void test_STS_Speed_Accel_Null_Guards(void) {
+    uint16_t speed = 0U;
+    const uint16_t dummy_speed = 1000U;
+    const uint8_t dummy_accel = 50U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetSpeed(NULL, dummy_speed, STS_DIR_CCW));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentSpeed(NULL, &speed));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentSpeed(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetAcceleration(NULL, dummy_accel));
+}
+
+void test_STS_SetTargetSpeed_Success(void) {
+    const uint16_t target_speed = 2000U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, target_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Out_Of_Range(void) {
+    const uint16_t out_of_range_speed = STS_MAX_SPEED + 1U;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, out_of_range_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_GetPresentSpeed_Success(void) {
+    const uint16_t expected_speed = 1500U; 
+  
+    uint8_t speed_data[STS_DATA_LEN_16BIT] = { 
+        (uint8_t)(expected_speed & 0xFFU), 
+        (uint8_t)((expected_speed >> 8U) & 0xFFU) 
+    };
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, speed_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    uint16_t actual_speed = 0U;
+    sts_result_t res = STS_GetPresentSpeed(&test_servo, &actual_speed);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_UINT16(expected_speed, actual_speed);
+}
+
+void test_STS_SetTargetAcceleration_Success(void) {
+    const uint8_t target_accel = 50U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, target_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Out_Of_Range(void) {
+    const uint16_t out_of_range_accel = STS_MAX_ACCELERATION + 1U;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, (uint8_t)out_of_range_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetSpeed_Max_Boundary(void) {
+    const uint16_t max_speed = STS_MAX_SPEED; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, max_speed, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Max_Boundary(void) {
+    const uint8_t max_accel = STS_MAX_ACCELERATION; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, max_accel);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Min_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, 0U, STS_DIR_CCW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetAcceleration_Min_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetAcceleration(&test_servo, 0U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Reverse_Direction_Allowed(void) {
+    const uint16_t valid_speed = 1000U; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, valid_speed, STS_DIR_CW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetSpeed(&test_servo, STS_MAX_SPEED, STS_DIR_CW);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetOperatingMode_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetOperatingMode(NULL, STS_MODE_POSITION));
+}
+
+void test_STS_SetOperatingMode_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetOperatingMode(&test_servo, STS_MODE_SPEED);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetOperatingMode_Invalid_Mode(void) {
+    sts_operating_mode_t invalid_mode = (sts_operating_mode_t)4U;
+
+    sts_result_t res = STS_SetOperatingMode(&test_servo, invalid_mode);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+/* ==========================================================================
+ * PWM & STEP COMMANDS
+ * ========================================================================== */
+
+void test_STS_PWM_Step_Null_Guards(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetPWM(NULL, TARGET_VALID_PWM_CCW, STS_DIR_CCW));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTargetStep(NULL, TARGET_VALID_STEP_CCW, STS_DIR_CW));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTarget(NULL, TARGET_VALID_SPEED_CCW));
+}
+
+void test_STS_SetTargetPWM_Out_Of_Range(void) {
+    const uint16_t out_of_range_pwm = STS_MAX_PWM + 1U;
+    sts_result_t res = STS_SetTargetPWM(&test_servo, out_of_range_pwm, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetStep_Out_Of_Range(void) {
+    const uint16_t out_of_range_step = STS_MAX_STEP + 1U;
+    sts_result_t res = STS_SetTargetStep(&test_servo, out_of_range_step, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTargetPWM_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPWM(&test_servo, TARGET_VALID_PWM_CCW, STS_DIR_CW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetStep_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetStep(&test_servo, TARGET_VALID_STEP_CCW, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPWM_Max_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPWM(&test_servo, STS_MAX_PWM, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetStep_Max_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetStep(&test_servo, STS_MAX_STEP, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetPWM_Zero_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetPWM(&test_servo, TARGET_ZERO, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTargetStep_Zero_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTargetStep(&test_servo, TARGET_ZERO, STS_DIR_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_SpeedMode_Min_Boundary(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, -(int32_t)STS_MAX_SPEED);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_PWMMode_Min_Boundary(void) {
+    test_servo.current_mode = STS_MODE_PWM;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, -(int32_t)STS_MAX_PWM);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_StepMode_Min_Boundary(void) {
+    test_servo.current_mode = STS_MODE_STEP;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, -(int32_t)STS_MAX_STEP);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_SpeedMode_Negative_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_NEG_SPEED); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTarget_PWMMode_Negative_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_PWM;
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_NEG_PWM); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTarget_StepMode_Positive_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_STEP;
+    /* We tested negative out-of-range earlier, this covers the positive side! */
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_POS_STEP); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+/* ==========================================================================
+ * UNIVERSAL TARGET WRAPPER 
+ * ========================================================================== */
+
+void test_STS_SetTarget_Zero_Boundary(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_ZERO);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_PositionMode_Normal(void) {
+    test_servo.current_mode = STS_MODE_POSITION;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_POS);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_PositionMode_ClampsNegativeToZero(void) {
+    test_servo.current_mode = STS_MODE_POSITION;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_NEG_POS);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_SpeedMode_Positive_CCW(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_SPEED_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_SpeedMode_Negative_CW(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_SPEED_CW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_SpeedMode_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_SPEED;
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_SPEED); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTarget_PWMMode_Positive_CCW(void) {
+    test_servo.current_mode = STS_MODE_PWM;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_PWM_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_PWMMode_Negative_CW(void) {
+    test_servo.current_mode = STS_MODE_PWM;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_PWM_CW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_PWMMode_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_PWM;
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_PWM); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTarget_StepMode_Positive_CCW(void) {
+    test_servo.current_mode = STS_MODE_STEP;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_STEP_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_StepMode_Negative_CW(void) {
+    test_servo.current_mode = STS_MODE_STEP;
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_STEP_CW);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTarget_StepMode_Out_Of_Range(void) {
+    test_servo.current_mode = STS_MODE_STEP;
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_INVALID_STEP); 
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTarget_InvalidMode(void) {
+    test_servo.current_mode = (sts_operating_mode_t)INVALID_OPERATING_MODE; 
+    sts_result_t res = STS_SetTarget(&test_servo, TARGET_VALID_SPEED_CCW);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+/* ==========================================================================
+ * TORQUE LIMIT COMMAND TESTS
+ * ========================================================================== */
+
+void test_STS_SetTorqueLimit_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTorqueLimit(NULL, TARGET_VALID_TORQUE_LIMIT));
+}
+
+void test_STS_SetTorqueLimit_Out_Of_Range(void) {
+    const uint16_t out_of_range_torque = STS_MAX_TORQUE + 1U;
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, out_of_range_torque);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, res);
+}
+
+void test_STS_SetTorqueLimit_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, TARGET_VALID_TORQUE_LIMIT);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueLimit_Max_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, STS_MAX_TORQUE);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+void test_STS_SetTorqueLimit_Zero_Boundary(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    sts_result_t res = STS_SetTorqueLimit(&test_servo, TARGET_ZERO);
+    TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+/* ==========================================================================
+ * STS TELEMETRY TESTS
+ * ========================================================================== */
+
+void test_STS_Telemetry_Null_Guards(void) {
+    uint8_t dummy_u8 = 0;
+    int16_t dummy_s16 = 0;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentLoad(NULL, &dummy_s16));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentVoltage(NULL, &dummy_u8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentTemperature(NULL, &dummy_u8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetMovingStatus(NULL, &dummy_u8));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentLoad(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentVoltage(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentTemperature(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetMovingStatus(&test_servo, NULL));
+}
+
+void test_STS_GetPresentLoad_Success(void) {
+    int16_t load_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {TEST_MOCK_LOAD_LOW_BYTE, TEST_MOCK_LOAD_HIGH_BYTE}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentLoad(&test_servo, &load_out));
+    TEST_ASSERT_EQUAL_INT16(TEST_MOCK_LOAD_VAL, load_out);
+}
+
+void test_STS_GetPresentVoltage_Success(void) {
+    uint8_t voltage_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_VOLTAGE_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentVoltage(&test_servo, &voltage_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_VOLTAGE_VAL, voltage_out);
+}
+
+void test_STS_GetPresentTemperature_Success(void) {
+    uint8_t temp_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_TEMP_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentTemperature(&test_servo, &temp_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_TEMP_VAL, temp_out);
+}
+
+void test_STS_GetMovingStatus_Success(void) {
+    uint8_t status_out = TEST_SENTINEL_MAX_U8;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_STATUS_STOPPED}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetMovingStatus(&test_servo, &status_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_STATUS_STOPPED, status_out);
+}
+
+void test_STS_Telemetry_Bubbles_Hardware_Error(void) {
+    uint8_t temp_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_TEMP_OVERHEAT_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    sts_result_t res = STS_GetPresentTemperature(&test_servo, &temp_out);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res); 
+}
+
+void test_STS_Telemetry_Preserves_State_On_Timeout(void) {
+    uint8_t voltage_out = TEST_SENTINEL_GARBAGE_U8; 
+    
+    dummy_uart_port.rx_len = TEST_ZERO_RX_LEN; 
+
+    sts_result_t res = STS_GetPresentVoltage(&test_servo, &voltage_out);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res); 
+    TEST_ASSERT_EQUAL_UINT8(TEST_SENTINEL_GARBAGE_U8, voltage_out); 
+}
+
+/* ==========================================================================
+ * STS EEPROM & ID CONFIG TESTS
+ * ========================================================================== */
+
+void test_STS_SetEEPROMLock_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetEEPROMLock(NULL, EEPROM_LOCK));
+}
+
+void test_STS_SetEEPROMLock_States(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_UNLOCK));
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_LOCK));
+
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, TEST_MOCK_GARBAGE_LOCK));
+}
+
+void test_STS_SetID_Null_Guard(void) {
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetID(NULL, TEST_MOCK_NEW_ID));
+}
+
+void test_STS_SetID_Out_Of_Range(void) {
+    const uint8_t invalid_id = STS_ID_BROADCAST_SYNC + 1U;
+    
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetID(&test_servo, invalid_id));
+}
+
+void test_STS_SetID_Success(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetID(&test_servo, TEST_MOCK_NEW_ID));
+}
