@@ -3,7 +3,7 @@
  * @file           : sts_servo_cmd.h
  * @brief          : STS Servo Command API
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -159,4 +159,47 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
  */
 sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir);
 
+/**
+ * @brief Sets the dynamic (RAM) maximum torque limit.
+ *
+ * @note Targets RAM register 0x30. Safe for continuous dynamic updates 
+ * without EEPROM wear. Reverts to EEPROM default upon power cycle.
+ *
+ * @param servo Pointer to an initialized servo handle.
+ * @param limit Max torque value (0 to STS_MAX_TORQUE). 0 disables torque.
+ * @return sts_result_t 
+ * - STS_OK: Success or specific error code
+ */
 sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit);
+
+/**
+ * @brief Reads the current physical load/effort of the motor.
+ * @param servo Pointer to an initialized servo handle.
+ * @param load_out Pointer to store the signed load value.
+ * @return STS_OK on success, or specific error code.
+ */
+sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out);
+
+/**
+ * @brief Reads the current input voltage at the servo's power terminals.
+ * @param servo Pointer to an initialized servo handle.
+ * @param voltage_out Pointer to store the voltage (in 0.1V units, e.g., 120 = 12.0V).
+ * @return STS_OK on success, or specific error code.
+ */
+sts_result_t STS_GetPresentVoltage(sts_servo_t *servo, uint8_t *voltage_out);
+
+/**
+ * @brief Reads the internal temperature of the servo's MCU/Motor driver.
+ * @param servo Pointer to an initialized servo handle.
+ * @param temp_out Pointer to store the temperature in degrees Celsius.
+ * @return STS_OK on success, or specific error code.
+ */
+sts_result_t STS_GetPresentTemperature(sts_servo_t *servo, uint8_t *temp_out);
+
+/**
+ * @brief Reads the moving status flag to determine if the motor is currently in motion.
+ * @param servo Pointer to an initialized servo handle.
+ * @param status_out Pointer to store the moving flag (1: Moving, 0: Target reached).
+ * @return STS_OK on success, or specific error code.
+ */
+sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out);

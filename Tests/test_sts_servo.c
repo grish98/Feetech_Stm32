@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.c
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
- * @date           : 2026-03-20
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
 @details
@@ -120,6 +120,21 @@
 #define TARGET_INVALID_STEP        (-35000)
 
 #define TARGET_VALID_TORQUE_LIMIT 500U
+
+/* Mock Telemetry Expected Data */
+#define TEST_MOCK_LOAD_VAL             1000   /* Raw expected integer */
+#define TEST_MOCK_LOAD_LOW_BYTE        0xE8U  /* 1000 in Little Endian */
+#define TEST_MOCK_LOAD_HIGH_BYTE       0x03U
+
+#define TEST_MOCK_VOLTAGE_VAL          125U   /* Represents 12.5V */
+#define TEST_MOCK_TEMP_VAL             50U    /* Represents 50°C */
+#define TEST_MOCK_TEMP_OVERHEAT_VAL    85U    /* Represents 85°C */
+#define TEST_MOCK_STATUS_STOPPED       0U     /* Motor not moving */
+
+/* Sentinel Values for State Preservation Checks */
+#define TEST_SENTINEL_MAX_U8           255U   /* Used to verify variable was overwritten */
+#define TEST_SENTINEL_GARBAGE_U8       99U    /* Used to verify variable was NOT overwritten */
+#define TEST_ZERO_RX_LEN               0U     /* Simulates disconnected line */
 
 /* ==========================================================================
  * Packet Corruption & Error Injection Constants
@@ -1434,4 +1449,91 @@ void test_STS_SetTorqueLimit_Zero_Boundary(void) {
 
     sts_result_t res = STS_SetTorqueLimit(&test_servo, TARGET_ZERO);
     TEST_ASSERT_EQUAL_INT(STS_OK, res);
+}
+
+/* ==========================================================================
+ * HARDENED TELEMETRY & FEEDBACK COMMAND TESTS (100% COVERAGE)
+ * ========================================================================== */
+
+void test_STS_Telemetry_Null_Guards(void) {
+    uint8_t dummy_u8 = 0;
+    int16_t dummy_s16 = 0;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentLoad(NULL, &dummy_s16));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentVoltage(NULL, &dummy_u8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentTemperature(NULL, &dummy_u8));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetMovingStatus(NULL, &dummy_u8));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentLoad(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentVoltage(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentTemperature(&test_servo, NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetMovingStatus(&test_servo, NULL));
+}
+
+
+void test_STS_GetPresentLoad_Success(void) {
+    int16_t load_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {TEST_MOCK_LOAD_LOW_BYTE, TEST_MOCK_LOAD_HIGH_BYTE}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentLoad(&test_servo, &load_out));
+    TEST_ASSERT_EQUAL_INT16(TEST_MOCK_LOAD_VAL, load_out);
+}
+
+void test_STS_GetPresentVoltage_Success(void) {
+    uint8_t voltage_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_VOLTAGE_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentVoltage(&test_servo, &voltage_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_VOLTAGE_VAL, voltage_out);
+}
+
+void test_STS_GetPresentTemperature_Success(void) {
+    uint8_t temp_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_TEMP_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentTemperature(&test_servo, &temp_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_TEMP_VAL, temp_out);
+}
+
+void test_STS_GetMovingStatus_Success(void) {
+    uint8_t status_out = TEST_SENTINEL_MAX_U8;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_STATUS_STOPPED}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetMovingStatus(&test_servo, &status_out));
+    TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_STATUS_STOPPED, status_out);
+}
+
+
+void test_STS_Telemetry_Bubbles_Hardware_Error(void) {
+    uint8_t temp_out = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_TEMP_OVERHEAT_VAL}; 
+    
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, mock_payload, PAYLOAD_LEN_1_BYTE, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ8_ACK_LEN;
+
+    sts_result_t res = STS_GetPresentTemperature(&test_servo, &temp_out);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, res); 
+}
+
+void test_STS_Telemetry_Preserves_State_On_Timeout(void) {
+    uint8_t voltage_out = TEST_SENTINEL_GARBAGE_U8; 
+    
+    dummy_uart_port.rx_len = TEST_ZERO_RX_LEN; 
+
+  
+    sts_result_t res = STS_GetPresentVoltage(&test_servo, &voltage_out);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res); 
+    TEST_ASSERT_EQUAL_UINT8(TEST_SENTINEL_GARBAGE_U8, voltage_out); 
 }

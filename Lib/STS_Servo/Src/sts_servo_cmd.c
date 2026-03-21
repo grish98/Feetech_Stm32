@@ -3,7 +3,7 @@
  * @file           : sts_servo_cmd.c
  * @brief          : STS Servo Command Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-19
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -156,4 +156,36 @@ sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit) {
         return STS_ERR_INVALID_PARAM;
     }
     return STS_Write16(servo, STS_REG_TORQUE_LIMIT, limit);
+}
+
+/* ==========================================================================
+ * TELEMETRY & FEEDBACK COMMANDS
+ * ========================================================================== */
+
+sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out) {
+    if (servo == NULL || load_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    return STS_Read16(servo, STS_REG_PRESENT_LOAD, (uint16_t*)load_out);
+}
+
+sts_result_t STS_GetPresentVoltage(sts_servo_t *servo, uint8_t *voltage_out) {
+    if (servo == NULL || voltage_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    return STS_Read8(servo, STS_REG_PRESENT_VOLTAGE, voltage_out);
+}
+
+sts_result_t STS_GetPresentTemperature(sts_servo_t *servo, uint8_t *temp_out) {
+    if (servo == NULL || temp_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    return STS_Read8(servo, STS_REG_PRESENT_TEMP, temp_out);
+}
+
+sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out) {
+    if (servo == NULL || status_out == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    return STS_Read8(servo, STS_REG_MOVING_FLAG, status_out);
 }

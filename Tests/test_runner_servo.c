@@ -3,7 +3,7 @@
  * @file           : test_runner_servo.c
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-19
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -157,6 +157,17 @@ int main(void) {
     RUN_TEST(test_STS_SetTorqueLimit_Success);
     RUN_TEST(test_STS_SetTorqueLimit_Max_Boundary);
     RUN_TEST(test_STS_SetTorqueLimit_Zero_Boundary);
+
+
+    printf("\n--- STS Telemetry Tests ---\n");
+    RUN_TEST(test_STS_Telemetry_Null_Guards);
+    RUN_TEST(test_STS_GetPresentLoad_Success);
+    RUN_TEST(test_STS_GetPresentVoltage_Success);
+    RUN_TEST(test_STS_GetPresentTemperature_Success);
+    RUN_TEST(test_STS_GetMovingStatus_Success);
+    RUN_TEST(test_STS_Telemetry_Bubbles_Hardware_Error);
+    RUN_TEST(test_STS_Telemetry_Preserves_State_On_Timeout);
+
 
     return UNITY_END();
 }

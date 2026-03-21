@@ -3,7 +3,7 @@
  * @file           : test_sts_servo.h
  * @brief          : Unit test declarations for the STS Service Layer
  * @author         : Grisham Balloo
- * @date           : 2026-03-19
+ * @date           : 2026-03-21
  * @version        : 0.2.0
  ******************************************************************************
  * @details
@@ -154,3 +154,11 @@ extern void test_STS_SetTorqueLimit_Out_Of_Range(void);
 extern void test_STS_SetTorqueLimit_Success(void);
 extern void test_STS_SetTorqueLimit_Max_Boundary(void);
 extern void test_STS_SetTorqueLimit_Zero_Boundary(void);
+
+extern void test_STS_Telemetry_Null_Guards(void);
+extern void test_STS_GetPresentLoad_Success(void);
+extern void test_STS_GetPresentVoltage_Success(void);
+extern void test_STS_GetPresentTemperature_Success(void);
+extern void test_STS_GetMovingStatus_Success(void);
+extern void test_STS_Telemetry_Bubbles_Hardware_Error(void); 
+extern void test_STS_Telemetry_Preserves_State_On_Timeout(void);
