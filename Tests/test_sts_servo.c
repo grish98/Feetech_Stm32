@@ -4,34 +4,34 @@
  * @brief          : Unit tests for the STS Service and Bus Layers
  * @author         : Grisham Balloo
  * @date           : 2026-03-21
- * @version        : 0.2.0
+ * @version        : 0.3.0
  ******************************************************************************
-@details
- * This test suite provides verification for the Feetech STS Service Layer
- * and Bus HAL implementation. It utilises the Unity Test Framework to
+ * @details
+ * This test suite provides verification for the Feetech STS Service Layer,
+ * Command API, and Bus HAL. It utilises the Unity Test Framework to
  * validate the following functional areas:
  *
- * 1. Bus Initialisation (8 tests): Validation of HAL function pointer mapping,
- *    deterministic memory overwrite, null-pointer guards, and re-initialisation
- *    safety across multiple hardware contexts.
+ * 1. Bus Initialisation: Validation of HAL function pointer mapping,
+ * deterministic memory overwrite, and null-pointer guards.
  *
- * 2. Servo Handle Initialisation (8 tests): Verification of ID boundary
- *    enforcement, state reset guarantees, atomic failure behaviour, and
- *    correct linkage across independent bus instances.
+ * 2. Servo Handle Initialisation: Verification of ID boundary enforcement,
+ * state reset guarantees, and multi-bus linkage.
  *
- * 3. Register Access Primitives (4 tests): Happy-path coverage for
- *    STS_Write8, STS_Write16, STS_Read8, and STS_Read16 against a
- *    simulated UART response.
+ * 3. Read/Write Primitives: Happy-path coverage for base registers.
  *
- * 4. Engine Robustness & Error Handling (11 tests): Stress-testing the
- *    sts_execute_command engine against null guards, bus faults, timeout,
- *    ID mismatch, checksum corruption, header corruption, malformed length
- *    fields, broadcast early-exit, and internal buffer overflow detection.
+ * 4. Engine Robustness: Stress-testing sts_execute_command against null guards,
+ * timeout, ID mismatch, checksum corruption, and buffer overflow.
  *
- * 5. Ping Service (11 tests): Verification of STS_servo_ping online/offline
- *    state management across success, timeout, ID mismatch, checksum error,
- *    bus busy, null guards, broadcast rejection, hardware error tolerance,
- *    boundary IDs, and offline-to-online recovery.
+ * 5. Ping Service: Online/offline state management and hardware error tolerance.
+ *
+ * 6. Kinematics & Motion Control: Exhaustive boundary testing for Position,
+ * Speed, Acceleration, PWM, and Step routing algorithms.
+ *
+ * 7. Telemetry & Feedback: Validation of load, voltage, temperature, and
+ * moving status polling, including timeout state preservation.
+ *
+ * 8. Configuration & EEPROM: Strict verification of EEPROM lock states,
+ * ternary boundary sanitisation, and valid ID assignments.
  *
  * @see Lib/STS_Servo/Inc/sts_servo.h for the target API documentation.
  *
@@ -49,14 +49,14 @@
 #include <string.h>
 
 /* ==========================================================================
- * Test Environment & Buffer Limits
+ * TEST ENVIRONMENT & BUFFER LIMITS
  * ========================================================================== */
 #define TEST_MAX_TX_BUFFER          128U
 #define TEST_MAX_RX_BUFFER          128U
 #define TEST_TIMEOUT_MS             100U
 
 /* ==========================================================================
- * Mock Hardware & Identity Configurations
+ * MOCK HARDWARE & IDENTITY CONFIGURATIONS
  * ========================================================================== */
 #define MOCK_BUS_ADDR_A             ((void*)0x1111)
 #define MOCK_BUS_ADDR_B             ((void*)0x2222)
@@ -67,7 +67,7 @@
 #define TEST_MAX_ID                 253U
 
 /* ==========================================================================
- * Protocol Sizing & Expected Lengths
+ * PROTOCOL SIZING & EXPECTED LENGTHS
  * ========================================================================== */
 #define PAYLOAD_LEN_NONE            0U
 #define PAYLOAD_LEN_1_BYTE          1U
@@ -79,7 +79,7 @@
 #define EXPECTED_READ16_ACK_LEN     (6U + PAYLOAD_LEN_2_BYTES) /* 8U */
 
 /* ==========================================================================
- * Raw Byte & Register Test Values
+ * RAW BYTE & REGISTER TEST VALUES
  * ========================================================================== */
 #define HW_STATUS_OK                0x00U
 #define INVALID_OPERATING_MODE      99U
@@ -93,7 +93,7 @@
 #define TEST_VAL_16BIT_HIGH         0x12U  /* Little-endian upper byte */
 
 /* ==========================================================================
- * Kinematic Target Boundaries & Intents
+ * KINEMATIC TARGET BOUNDARIES & INTENTS
  * ========================================================================== */
 #define TARGET_ZERO                 0
 
@@ -119,29 +119,29 @@
 #define TARGET_INVALID_POS_STEP     35000
 #define TARGET_INVALID_STEP        (-35000)
 
-#define TARGET_VALID_TORQUE_LIMIT 500U
+#define TARGET_VALID_TORQUE_LIMIT   500U
 
 /* Mock Telemetry Expected Data */
-#define TEST_MOCK_LOAD_VAL             1000   /* Raw expected integer */
-#define TEST_MOCK_LOAD_LOW_BYTE        0xE8U  /* 1000 in Little Endian */
-#define TEST_MOCK_LOAD_HIGH_BYTE       0x03U
+#define TEST_MOCK_LOAD_VAL          1000   /* Raw expected integer */
+#define TEST_MOCK_LOAD_LOW_BYTE     0xE8U  /* 1000 in Little Endian */
+#define TEST_MOCK_LOAD_HIGH_BYTE    0x03U
 
-#define TEST_MOCK_VOLTAGE_VAL          125U   /* Represents 12.5V */
-#define TEST_MOCK_TEMP_VAL             50U    /* Represents 50°C */
-#define TEST_MOCK_TEMP_OVERHEAT_VAL    85U    /* Represents 85°C */
-#define TEST_MOCK_STATUS_STOPPED       0U     /* Motor not moving */
+#define TEST_MOCK_VOLTAGE_VAL       125U   /* Represents 12.5V */
+#define TEST_MOCK_TEMP_VAL          50U    /* Represents 50°C */
+#define TEST_MOCK_TEMP_OVERHEAT_VAL 85U    /* Represents 85°C */
+#define TEST_MOCK_STATUS_STOPPED    0U     /* Motor not moving */
 
 /* Sentinel Values for State Preservation Checks */
-#define TEST_SENTINEL_MAX_U8           255U   /* Used to verify variable was overwritten */
-#define TEST_SENTINEL_GARBAGE_U8       99U    /* Used to verify variable was NOT overwritten */
-#define TEST_ZERO_RX_LEN               0U     /* Simulates disconnected line */
+#define TEST_SENTINEL_MAX_U8        255U   /* Used to verify variable was overwritten */
+#define TEST_SENTINEL_GARBAGE_U8    99U    /* Used to verify variable was NOT overwritten */
+#define TEST_ZERO_RX_LEN            0U     /* Simulates disconnected line */
 
 /* EEPROM & ID Test Values */
-#define TEST_MOCK_NEW_ID           10U
-#define TEST_MOCK_GARBAGE_LOCK     255U /* Used to prove the ternary operator sanitizes input */
+#define TEST_MOCK_NEW_ID            10U
+#define TEST_MOCK_GARBAGE_LOCK      255U   
 
 /* ==========================================================================
- * Packet Corruption & Error Injection Constants
+ * PACKET CORRUPTION & ERROR INJECTION CONSTANTS
  * ========================================================================== */
 /* Byte Indices in a standard STS Packet */
 #define IDX_HEADER_START            0U
@@ -1456,7 +1456,7 @@ void test_STS_SetTorqueLimit_Zero_Boundary(void) {
 }
 
 /* ==========================================================================
- * HARDENED TELEMETRY & FEEDBACK COMMAND TESTS (100% COVERAGE)
+ * STS TELEMETRY TESTS
  * ========================================================================== */
 
 void test_STS_Telemetry_Null_Guards(void) {
@@ -1473,7 +1473,6 @@ void test_STS_Telemetry_Null_Guards(void) {
     TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetPresentTemperature(&test_servo, NULL));
     TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_GetMovingStatus(&test_servo, NULL));
 }
-
 
 void test_STS_GetPresentLoad_Success(void) {
     int16_t load_out = 0;
@@ -1519,7 +1518,6 @@ void test_STS_GetMovingStatus_Success(void) {
     TEST_ASSERT_EQUAL_UINT8(TEST_MOCK_STATUS_STOPPED, status_out);
 }
 
-
 void test_STS_Telemetry_Bubbles_Hardware_Error(void) {
     uint8_t temp_out = 0;
     uint8_t mock_payload[PAYLOAD_LEN_1_BYTE] = {TEST_MOCK_TEMP_OVERHEAT_VAL}; 
@@ -1536,14 +1534,13 @@ void test_STS_Telemetry_Preserves_State_On_Timeout(void) {
     
     dummy_uart_port.rx_len = TEST_ZERO_RX_LEN; 
 
-  
     sts_result_t res = STS_GetPresentVoltage(&test_servo, &voltage_out);
     TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, res); 
     TEST_ASSERT_EQUAL_UINT8(TEST_SENTINEL_GARBAGE_U8, voltage_out); 
 }
 
 /* ==========================================================================
- * EEPROM & ID CONFIGURATION COMMAND TESTS
+ * STS EEPROM & ID CONFIG TESTS
  * ========================================================================== */
 
 void test_STS_SetEEPROMLock_Null_Guard(void) {
@@ -1551,17 +1548,14 @@ void test_STS_SetEEPROMLock_Null_Guard(void) {
 }
 
 void test_STS_SetEEPROMLock_States(void) {
-
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
     TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_UNLOCK));
     
-
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
     TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, EEPROM_LOCK));
 
-    
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
     TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetEEPROMLock(&test_servo, TEST_MOCK_GARBAGE_LOCK));

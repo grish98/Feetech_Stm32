@@ -13,8 +13,8 @@ A portable, dependency-free C library for communicating with **Feetech STS serie
 - **Stateless design** — thread-safe when provided unique buffers; supports multiple servos independently
 - **Precise error reporting** — distinct error codes for every failure mode
 - **Portable** — written in C11 with fixed-width types; no platform-specific dependencies
-- **HAL-agnostic service layer** — injected function pointers decouple servo logic from MCU UART implementation
-- **68 unit tests** — verified with the Unity framework via CTest
+- **HAL-agnostic service layer** — injected function pointers decouple servo logic from MCU UART implementation; includes a full command set covering position, speed, acceleration, PWM, step, torque, telemetry, and EEPROM control
+- **168 unit tests** — verified with the Unity framework via CTest
 
 ---
 
@@ -39,7 +39,22 @@ The library is split into two layers:
 
 **Protocol Layer** (`sts_protocol`) — stateless packet framing, checksum, and response parsing. No knowledge of hardware or servo state.
 
-**Service Layer** (`sts_servo`) — HAL-agnostic servo management built on top of the protocol layer. Handles bus wiring, servo handles, and all servo transactions through a single command engine.
+**Service Layer** (`sts_servo`, `sts_servo_cmd`) — HAL-agnostic servo management built on top of the protocol layer. Handles bus wiring, servo handles, and all servo transactions through a single command engine. The command set (`sts_servo_cmd`) is part of this layer, providing motion control, telemetry reads, and configuration commands built directly on the register access primitives.
+
+---
+
+## Operating Modes
+
+The STS servo supports four operating modes, set via `STS_SetOperatingMode`. The active mode determines how target commands are interpreted.
+
+| Mode                | Description |
+|---------------------|-------------|
+| `STS_MODE_POSITION` | Moves the servo to an absolute position within `[0, STS_MAX_POSITION]`. The servo holds position under load. This is the default mode for most applications. |
+| `STS_MODE_SPEED`    | Drives the servo continuously at a target speed within `[0, STS_MAX_SPEED]`. Direction is specified separately — positive values drive CCW, negative values drive CW. Useful for wheel-drive or conveyor applications. |
+| `STS_MODE_PWM`      | Applies a raw PWM duty cycle to the motor within `[0, STS_MAX_PWM]`. No closed-loop control is active. Direction is specified separately. Use when direct motor voltage control is required. |
+| `STS_MODE_STEP`     | Commands a relative step count within `[0, STS_MAX_STEP]`. Direction is specified separately. Useful for incremental motion without tracking absolute position. |
+
+When using `STS_SetTarget`, the sign of the `target` argument encodes direction for speed, PWM, and step modes. Position mode ignores the sign and clamps negative values to zero.
 
 ---
 
@@ -144,6 +159,155 @@ Reads an 8-bit or 16-bit value from a servo register. Broadcast IDs are rejected
 
 ---
 
+### Service Layer — Commands
+
+#### Motion Control
+
+##### `STS_SetTorqueEnable`
+```c
+sts_result_t STS_SetTorqueEnable(sts_servo_t* servo, uint8_t enable);
+```
+Enables or disables servo torque. Any non-zero value enables torque; `0` disables it.
+
+---
+
+##### `STS_SetOperatingMode`
+```c
+sts_result_t STS_SetOperatingMode(sts_servo_t* servo, sts_operating_mode_t mode);
+```
+Sets the servo operating mode. Valid modes are `STS_MODE_POSITION`, `STS_MODE_SPEED`, `STS_MODE_PWM`, and `STS_MODE_STEP`. The `servo->current_mode` field is used by `STS_SetTarget` to route commands correctly.
+
+---
+
+##### `STS_SetTargetPosition`
+```c
+sts_result_t STS_SetTargetPosition(sts_servo_t* servo, uint16_t position);
+```
+Writes the goal position register. `position` must be within `[0, STS_MAX_POSITION]`.
+
+---
+
+##### `STS_GetPresentPosition`
+```c
+sts_result_t STS_GetPresentPosition(sts_servo_t* servo, uint16_t* position_out);
+```
+Reads the present position register.
+
+---
+
+##### `STS_SetTargetSpeed`
+```c
+sts_result_t STS_SetTargetSpeed(sts_servo_t* servo, uint16_t speed, sts_direction_t dir);
+```
+Writes the goal speed register with direction. `speed` must be within `[0, STS_MAX_SPEED]`. Direction is encoded into the register's direction bit.
+
+---
+
+##### `STS_GetPresentSpeed`
+```c
+sts_result_t STS_GetPresentSpeed(sts_servo_t* servo, uint16_t* speed_out);
+```
+Reads the present speed register.
+
+---
+
+##### `STS_SetTargetAcceleration`
+```c
+sts_result_t STS_SetTargetAcceleration(sts_servo_t* servo, uint8_t acceleration);
+```
+Writes the acceleration register. `acceleration` must be within `[0, STS_MAX_ACCELERATION]`.
+
+---
+
+##### `STS_SetTargetPWM`
+```c
+sts_result_t STS_SetTargetPWM(sts_servo_t* servo, uint16_t pwm, sts_direction_t dir);
+```
+Writes the goal speed register as a raw PWM value with direction. Used in `STS_MODE_PWM`. `pwm` must be within `[0, STS_MAX_PWM]`.
+
+---
+
+##### `STS_SetTargetStep`
+```c
+sts_result_t STS_SetTargetStep(sts_servo_t* servo, uint16_t steps, sts_direction_t dir);
+```
+Writes the goal position register as a step count with direction. Used in `STS_MODE_STEP`. `steps` must be within `[0, STS_MAX_STEP]`.
+
+---
+
+##### `STS_SetTarget`
+```c
+sts_result_t STS_SetTarget(sts_servo_t* servo, int32_t target);
+```
+Universal target dispatcher. Routes to the appropriate command based on `servo->current_mode`:
+
+- `STS_MODE_POSITION` — calls `STS_SetTargetPosition`; negative values are clamped to 0
+- `STS_MODE_SPEED` — calls `STS_SetTargetSpeed`; sign determines direction
+- `STS_MODE_PWM` — calls `STS_SetTargetPWM`; sign determines direction
+- `STS_MODE_STEP` — calls `STS_SetTargetStep`; sign determines direction
+
+---
+
+##### `STS_SetTorqueLimit`
+```c
+sts_result_t STS_SetTorqueLimit(sts_servo_t* servo, uint16_t limit);
+```
+Writes the torque limit register. `limit` must be within `[0, STS_MAX_TORQUE]`.
+
+---
+
+#### Telemetry
+
+##### `STS_GetPresentLoad`
+```c
+sts_result_t STS_GetPresentLoad(sts_servo_t* servo, int16_t* load_out);
+```
+Reads the present load register as a signed 16-bit value.
+
+---
+
+##### `STS_GetPresentVoltage`
+```c
+sts_result_t STS_GetPresentVoltage(sts_servo_t* servo, uint8_t* voltage_out);
+```
+Reads the present voltage register.
+
+---
+
+##### `STS_GetPresentTemperature`
+```c
+sts_result_t STS_GetPresentTemperature(sts_servo_t* servo, uint8_t* temp_out);
+```
+Reads the present temperature register.
+
+---
+
+##### `STS_GetMovingStatus`
+```c
+sts_result_t STS_GetMovingStatus(sts_servo_t* servo, uint8_t* status_out);
+```
+Reads the moving flag register.
+
+---
+
+#### Configuration
+
+##### `STS_SetEEPROMLock`
+```c
+sts_result_t STS_SetEEPROMLock(sts_servo_t* servo, uint8_t lock);
+```
+Locks or unlocks the EEPROM. Pass `EEPROM_LOCK` or `EEPROM_UNLOCK`. EEPROM must be unlocked before writing persistent configuration registers such as ID.
+
+---
+
+##### `STS_SetID`
+```c
+sts_result_t STS_SetID(sts_servo_t* servo, uint8_t new_id);
+```
+Writes a new ID to the servo's EEPROM ID register. `new_id` must be in the range `[0, STS_ID_BROADCAST_SYNC]`. The EEPROM must be unlocked with `STS_SetEEPROMLock` before calling this, and locked again immediately after to prevent flash wear.
+
+---
+
 ### Error Codes
 
 | Code                    | Meaning                                              |
@@ -151,7 +315,7 @@ Reads an 8-bit or 16-bit value from a servo register. Broadcast IDs are rejected
 | `STS_OK`                | Operation successful                                 |
 | `STS_ERR_NULL_PTR`      | A required pointer argument was NULL                 |
 | `STS_ERR_INVALID_LEN`   | Length value outside protocol limits                 |
-| `STS_ERR_INVALID_PARAM` | Invalid ID or instruction byte                       |
+| `STS_ERR_INVALID_PARAM` | Invalid ID, instruction, or out-of-range value       |
 | `STS_ERR_BUF_TOO_SMALL` | Provided buffer cannot hold the packet or parameters |
 | `STS_ERR_HEADER`        | Packet does not begin with `0xFF 0xFF`               |
 | `STS_ERR_ID_MISMATCH`   | Response ID does not match expected ID               |
@@ -197,7 +361,7 @@ res = sts_parse_response(
 );
 ```
 
-### Service Layer (HAL-injected servo control)
+### Service Layer (HAL-injected servo control and commands)
 
 ```c
 #include "sts_servo.h"
@@ -227,10 +391,48 @@ if (STS_servo_ping(&servo) == STS_OK) {
     /* servo.is_online == STS_ONLINE */
 }
 
-/* 4. Read and write registers */
+/* 4. Read and write registers directly */
 uint16_t position = 0;
 STS_Read16(&servo, STS_REG_PRESENT_POSITION, &position);
 STS_Write16(&servo, STS_REG_GOAL_POSITION, 2048);
+```
+
+### High-Level Commands
+
+```c
+#include "sts_servo_cmd.h"
+
+/* Set position mode and drive to centre */
+STS_SetOperatingMode(&servo, STS_MODE_POSITION);
+STS_SetTorqueEnable(&servo, 1);
+STS_SetTargetAcceleration(&servo, 50);
+STS_SetTargetPosition(&servo, 2048);
+
+/* Poll until the servo stops moving */
+uint8_t moving = 1;
+while (moving) {
+    STS_GetMovingStatus(&servo, &moving);
+}
+
+/* Read back telemetry */
+uint16_t pos;
+uint8_t  temp, voltage;
+int16_t  load;
+
+STS_GetPresentPosition(&servo, &pos);
+STS_GetPresentTemperature(&servo, &temp);
+STS_GetPresentVoltage(&servo, &voltage);
+STS_GetPresentLoad(&servo, &load);
+
+/* Universal dispatcher — sign encodes direction in speed/PWM/step modes */
+STS_SetOperatingMode(&servo, STS_MODE_SPEED);
+STS_SetTarget(&servo,  500);   /* CCW at speed 500 */
+STS_SetTarget(&servo, -500);   /* CW  at speed 500 */
+
+/* Persist a new ID (unlock EEPROM first, lock immediately after) */
+STS_SetEEPROMLock(&servo, EEPROM_UNLOCK);
+STS_SetID(&servo, 0x02);
+STS_SetEEPROMLock(&servo, EEPROM_LOCK);
 ```
 
 ---
@@ -244,19 +446,21 @@ feetech-sts-driver/
 │       ├── Inc/
 │       │   ├── sts_protocol.h      # Protocol layer API and type definitions
 │       │   ├── sts_servo.h         # Service layer API and HAL typedefs
+│       │   ├── sts_servo_cmd.h     # Service layer command API
 │       │   └── sts_registers.h     # Servo register address definitions
 │       └── Src/
 │           ├── sts_protocol.c      # Protocol layer implementation
-│           └── sts_servo.c         # Service layer implementation
+│           ├── sts_servo.c         # Service layer implementation
+│           └── sts_servo_cmd.c     # Service layer command implementation
 ├── Tests/
 │   ├── test_sts_protocol.c         # Protocol layer unit tests (Unity)
 │   ├── test_sts_protocol.h         # Protocol test prototypes
-│   ├── test_sts_servo.c            # Service layer unit tests (Unity)
-│   ├── test_sts_servo.h            # Service test prototypes
+│   ├── test_sts_servo.c            # Service and command layer unit tests (Unity)
+│   ├── test_sts_servo.h            # Servo test prototypes
 │   ├── test_sts_utils.c            # Response simulation helpers
 │   ├── test_sts_utils.h            # Test utility prototypes
-│   ├── test_runner.c               # Protocol layer CTest entry point
-│   └── test_runner_servo.c         # Service layer CTest entry point
+│   ├── test_runner_protocol.c      # Protocol layer CTest entry point
+│   └── test_runner_servo.c         # Service and command layer CTest entry point
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                  # CI pipeline
@@ -291,13 +495,25 @@ cd build && ctest --output-on-failure
 --- STS Parser Tests ---
 --- STS Protocol Integration Tests ---
 
---- STS Bus Initialization Tests ---
---- STS Servo Initialization Tests ---
+40 Tests  0 Failures  0 Ignored
+OK
+
+--- STS Bus Initialisation Tests ---
+--- STS Servo Initialisation Tests ---
 --- STS Servo Read/Write Tests ---
 --- STS Command Engine Tests ---
 --- STS Servo Ping Tests ---
+--- STS Torque Enable Tests ---
+--- STS Position Control Tests ---
+--- STS Speed & Acceleration Tests ---
+--- STS Operating Mode Tests ---
+--- STS PWM & Step Control Tests ---
+--- STS Universal Target Routing Tests ---
+--- STS Torque Limit Tests ---
+--- STS Telemetry Tests ---
+--- STS EEPROM & ID Config Tests ---
 
-68 Tests  0 Failures  0 Ignored
+128 Tests  0 Failures  0 Ignored
 OK
 ```
 
@@ -332,29 +548,28 @@ The parser holds no internal state between calls. Each call to `sts_parse_respon
 **Why a centralised command engine?**
 All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, and provides a single point of change when features like mutex support or async IO are added later.
 
+**Why does `STS_SetID` not bundle EEPROM lock/unlock?**
+Bundling the lock/unlock sequence inside `STS_SetID` would hide repeated flash writes if the function were called incorrectly in a loop. Keeping the responsibility with the caller makes the flash write cost explicit and prevents accidental EEPROM wear.
+
+**Why does `STS_SetTarget` clamp negative position values to zero instead of rejecting them?**
+In position mode, a negative target has no physical meaning but a zero position is always valid. Clamping avoids a hard error for what is most likely an off-by-one in the caller's coordinate calculation, while still keeping the servo in a safe state. The other modes use sign to encode direction, so rejection there is appropriate.
+
 ---
 
 ## Compatibility
 
-Developed and verified on a host machine via unit tests. The library has no
-platform-specific dependencies and is designed for portability to any target
-with a C11 toolchain, including STM32 Cortex-M platforms.
+Developed and verified on a host machine via unit tests. The library has no platform-specific dependencies and is designed for portability to any target with a C11 toolchain, including STM32 Cortex-M platforms.
 
-Fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`) are used
-throughout for cross-architecture correctness.
+Fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`) are used throughout for cross-architecture correctness.
 
-> **Note:** Hardware validation against a physical Feetech STS servo is
-> in progress. This section will be updated once confirmed on target hardware.
+> **Note:** Hardware validation against a physical Feetech STS servo is in progress. This section will be updated once confirmed on target hardware.
 
 ---
 
 ## Roadmap
 
 - [x] Protocol layer — packet framing, checksum, noise-resilient parsing
-- [x] Service layer — HAL-agnostic bus abstraction and command engine
-- [x] Register access primitives — `Read8`, `Read16`, `Write8`, `Write16`
-- [x] Ping service — servo discovery with online state management
-- [ ] Complete service layer — position, velocity, torque control
+- [x] Service layer — HAL-agnostic bus abstraction, command engine, register access primitives, ping, and full command set (position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, ID)
 - [ ] Sync Write and Bulk Read support
 - [ ] HAL integration examples for STM32
 - [ ] Hardware validation against physical Feetech STS servo

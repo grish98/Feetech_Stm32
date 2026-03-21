@@ -17,7 +17,7 @@
 #pragma once
 #include "sts_servo.h"
 
-/* --- Bus Initialization Tests --- */
+/* --- Bus Initialisation Tests --- */
 extern void test_STS_Bus_Init_Success(void);
 extern void test_STS_Bus_Init_Null_Bus(void);
 extern void test_STS_Bus_Init_Null_TX(void);
@@ -27,7 +27,7 @@ extern void test_STS_Bus_Init_Overwrites_Garbage(void);
 extern void test_STS_Bus_Init_Reinitialization(void);
 extern void test_STS_Bus_Interface_Execution(void);
 
-/* --- Servo Initialization Tests --- */
+/* --- Servo Initialisation Tests --- */
 extern void test_STS_Servo_Init_Success(void);
 extern void test_STS_Servo_Init_Null_Servo(void);
 extern void test_STS_Servo_Init_Null_Bus(void);
@@ -102,6 +102,7 @@ extern void test_STS_GetPresentPosition_Broadcast_Forbidden(void);
 extern void test_STS_GetPresentPosition_Payload_Length_Mismatch(void);
 extern void test_STS_GetPresentPosition_Stage2_Timeout(void);
 
+/* --- STS Speed & Acceleration Tests --- */
 extern void test_STS_Speed_Accel_Null_Guards(void);
 extern void test_STS_SetTargetSpeed_Success(void);
 extern void test_STS_SetTargetSpeed_Out_Of_Range(void);
@@ -115,10 +116,12 @@ extern void test_STS_SetTargetAcceleration_Min_Boundary(void);
 extern void test_STS_SetTargetSpeed_Reverse_Direction_Allowed(void);
 extern void test_STS_SetTargetSpeed_Max_Reverse_Allowed(void);
 
+/* --- STS Operating Mode Tests --- */
 extern void test_STS_SetOperatingMode_Null_Guard(void);
 extern void test_STS_SetOperatingMode_Success(void);
 extern void test_STS_SetOperatingMode_Invalid_Mode(void);
 
+/* --- STS PWM & Step Control Tests --- */
 extern void test_STS_PWM_Step_Null_Guards(void);
 extern void test_STS_SetTargetPWM_Out_Of_Range(void);
 extern void test_STS_SetTargetStep_Out_Of_Range(void);
@@ -136,6 +139,7 @@ extern void test_STS_SetTarget_SpeedMode_Negative_Out_Of_Range(void);
 extern void test_STS_SetTarget_PWMMode_Negative_Out_Of_Range(void);
 extern void test_STS_SetTarget_StepMode_Positive_Out_Of_Range(void);
 
+/* --- STS Universal Target Routing Tests --- */
 extern void test_STS_SetTarget_PositionMode_Normal(void);
 extern void test_STS_SetTarget_PositionMode_ClampsNegativeToZero(void);
 extern void test_STS_SetTarget_SpeedMode_Positive_CCW(void);
@@ -149,12 +153,14 @@ extern void test_STS_SetTarget_StepMode_Negative_CW(void);
 extern void test_STS_SetTarget_PWMMode_Out_Of_Range(void);
 extern void test_STS_SetTarget_StepMode_Out_Of_Range(void);
 
+/* --- STS Torque Limit Tests --- */
 extern void test_STS_SetTorqueLimit_Null_Guard(void);
 extern void test_STS_SetTorqueLimit_Out_Of_Range(void);
 extern void test_STS_SetTorqueLimit_Success(void);
 extern void test_STS_SetTorqueLimit_Max_Boundary(void);
 extern void test_STS_SetTorqueLimit_Zero_Boundary(void);
 
+/* --- STS Telemetry Tests --- */
 extern void test_STS_Telemetry_Null_Guards(void);
 extern void test_STS_GetPresentLoad_Success(void);
 extern void test_STS_GetPresentVoltage_Success(void);
@@ -163,6 +169,7 @@ extern void test_STS_GetMovingStatus_Success(void);
 extern void test_STS_Telemetry_Bubbles_Hardware_Error(void); 
 extern void test_STS_Telemetry_Preserves_State_On_Timeout(void);
 
+/* --- STS EEPROM & ID Config Tests --- */
 extern void test_STS_SetEEPROMLock_Null_Guard(void);
 extern void test_STS_SetEEPROMLock_States(void);
 extern void test_STS_SetID_Null_Guard(void);

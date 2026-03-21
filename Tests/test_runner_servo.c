@@ -25,7 +25,7 @@ int main(void) {
 
     printf("========== STS Service Layer Unit Tests ==========\n");
 
-    printf("\n--- STS Bus Initialization Tests ---\n");
+    printf("\n--- STS Bus Initialisation Tests ---\n");
     RUN_TEST(test_STS_Bus_Init_Success);
     RUN_TEST(test_STS_Bus_Init_Null_Bus);
     RUN_TEST(test_STS_Bus_Init_Null_TX);
@@ -35,7 +35,7 @@ int main(void) {
     RUN_TEST(test_STS_Bus_Init_Reinitialization);
     RUN_TEST(test_STS_Bus_Interface_Execution);
 
-    printf("\n--- STS Servo Initialization Tests ---\n");
+    printf("\n--- STS Servo Initialisation Tests ---\n");
     RUN_TEST(test_STS_Servo_Init_Success);
     RUN_TEST(test_STS_Servo_Init_Null_Servo);
     RUN_TEST(test_STS_Servo_Init_Null_Bus);
@@ -82,13 +82,15 @@ int main(void) {
     RUN_TEST(test_STS_Ping_Max_Valid_ID);
     RUN_TEST(test_STS_Ping_Recovery_Offline_To_Online);
 
-    printf("\n--- STS Servo Public API  ---\n");
+    printf("\n--- STS Torque Enable Tests ---\n");    
     RUN_TEST(test_STS_SetTorqueEnable_Success);
     RUN_TEST(test_STS_SetTorqueEnable_Disable);
     RUN_TEST(test_STS_SetTorqueEnable_NonStandard_True);
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
     RUN_TEST(test_STS_SetTorqueEnable_Error_Propagation);
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
+
+    printf("\n--- STS Position Control Tests ---\n");
     RUN_TEST(test_STS_GetPresentPosition_Success);
     RUN_TEST(test_STS_Position_API_Null_Guards);
     RUN_TEST(test_STS_GetPresentPosition_Endianness);
@@ -108,6 +110,7 @@ int main(void) {
     RUN_TEST(test_STS_GetPresentPosition_Stage2_Timeout);
     RUN_TEST(test_STS_SetTargetPosition_Just_Out_Of_Range);
 
+    printf("\n--- STS Speed & Acceleration Tests ---\n");
     RUN_TEST(test_STS_Speed_Accel_Null_Guards);
     RUN_TEST(test_STS_SetTargetSpeed_Success);
     RUN_TEST(test_STS_SetTargetSpeed_Out_Of_Range);
@@ -118,10 +121,12 @@ int main(void) {
     RUN_TEST(test_STS_SetTargetSpeed_Max_Boundary);
     RUN_TEST(test_STS_SetTargetSpeed_Reverse_Direction_Allowed);
 
+    printf("\n--- STS Operating Mode Tests ---\n");
     RUN_TEST(test_STS_SetOperatingMode_Null_Guard);
     RUN_TEST(test_STS_SetOperatingMode_Success);
     RUN_TEST(test_STS_SetOperatingMode_Invalid_Mode);
 
+    printf("\n--- STS PWM & Step Control Tests ---\n");
     RUN_TEST(test_STS_PWM_Step_Null_Guards);
     RUN_TEST(test_STS_SetTargetPWM_Out_Of_Range);
     RUN_TEST(test_STS_SetTargetStep_Out_Of_Range);
@@ -139,6 +144,7 @@ int main(void) {
     RUN_TEST(test_STS_SetTarget_PWMMode_Negative_Out_Of_Range);
     RUN_TEST(test_STS_SetTarget_StepMode_Positive_Out_Of_Range);
 
+    printf("\n--- STS Universal Target Routing Tests ---\n");
     RUN_TEST(test_STS_SetTarget_PositionMode_Normal);
     RUN_TEST(test_STS_SetTarget_PositionMode_ClampsNegativeToZero);
     RUN_TEST(test_STS_SetTarget_SpeedMode_Positive_CCW);
@@ -152,6 +158,7 @@ int main(void) {
     RUN_TEST(test_STS_SetTarget_PWMMode_Positive_CCW);
     RUN_TEST(test_STS_SetTarget_StepMode_Negative_CW);
 
+    printf("\n--- STS Torque Limit Tests ---\n");
     RUN_TEST(test_STS_SetTorqueLimit_Null_Guard);
     RUN_TEST(test_STS_SetTorqueLimit_Out_Of_Range);
     RUN_TEST(test_STS_SetTorqueLimit_Success);
