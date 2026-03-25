@@ -31,9 +31,24 @@ int main(void) {
     RUN_TEST(test_STS_Bus_Init_Null_TX);
     RUN_TEST(test_STS_Bus_Init_Null_RX);
     RUN_TEST(test_STS_Bus_Init_Null_Port_Handle_Succeeds);
+    RUN_TEST(test_STS_Bus_Transmit_Rejects_Null_Data_Pointer);
+    RUN_TEST(test_STS_Bus_Receive_Rejects_Null_Data_Pointer);
+    RUN_TEST(test_STS_Bus_Transmit_Rejects_Null_Bus_Context);
+    RUN_TEST(test_STS_Bus_Transmit_With_Null_Port_Handle_Allowed_For_Bare_Metal);
     RUN_TEST(test_STS_Bus_Init_Overwrites_Garbage);
-    RUN_TEST(test_STS_Bus_Init_Reinitialization);
-    RUN_TEST(test_STS_Bus_Interface_Execution);
+    RUN_TEST(test_STS_Bus_Init_Reinitialisation);
+    RUN_TEST(test_STS_Bus_Transmit_Routes_To_HAL);
+    RUN_TEST(test_STS_Bus_Receive_Pulls_From_HAL);
+    RUN_TEST(test_STS_Bus_Transmit_MultiByte_Payload);
+    RUN_TEST(test_STS_Bus_Transmit_Bubbles_HAL_Error);
+    RUN_TEST(test_STS_Bus_Receive_MultiByte_Payload);
+    RUN_TEST( test_STS_Bus_Receive_Bubbles_Timeout);
+    RUN_TEST(test_STS_Bus_Receive_Partial_Transfer_Yields_Timeout);
+    RUN_TEST(test_STS_Bus_Transmit_Zero_Length_Is_NoOp);
+    RUN_TEST(test_STS_Bus_Receive_Zero_Length_Is_NoOp);
+    RUN_TEST(test_STS_Bus_Transmit_Rejects_Uninitialised_Function_Pointer);
+    RUN_TEST(test_STS_Bus_Receive_Timeout_Preserves_Full_Buffer_Integrity);
+    RUN_TEST(test_STS_Bus_Isolation_Multiple_Instances);
 
     printf("\n--- STS Servo Initialisation Tests ---\n");
     RUN_TEST(test_STS_Servo_Init_Success);
@@ -68,6 +83,9 @@ int main(void) {
     RUN_TEST(test_STS_ExecuteCommand_Zero_Expected_RX);
     RUN_TEST(test_STS_ExecuteCommand_Broadcast_Forces_Early_Exit);
     RUN_TEST(test_STS_ExecuteCommand_Null_Cmd_Guard);
+    RUN_TEST(test_STS_ExecuteCommand_Rejects_Uninitialised_Bus_Pointers);
+
+
 
     printf("\n--- STS Servo Ping Tests ---\n");
     RUN_TEST(test_STS_Ping_Success);    

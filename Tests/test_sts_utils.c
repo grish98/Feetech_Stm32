@@ -3,7 +3,7 @@
  * @file           : test_sts_utils.c
  * @brief          : Support utilities for STS Protocol Testing
  * @author         : Grisham Balloo
- * @date           : 2026-03-08
+ * @date           : 2026-03-22
  * @version        : 1.2.0
  ******************************************************************************
  * @details
@@ -29,13 +29,18 @@ sts_result_t mock_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
         return STS_ERR_NULL_PTR;
     }
     
+    if (len == 0U) return STS_OK; 
+
     mock_uart_t *port = (mock_uart_t *)bus->port_handle;
     
     port->tx_call_count++; 
+    port->last_timeout_ms = 0U; 
 
     if (len <= sizeof(port->tx_buffer)) {
         memcpy(port->tx_buffer, data, len);
         port->tx_len = len;
+    } else {
+        return STS_ERR_TX_FAIL; 
     }
     
     return STS_OK;
@@ -46,8 +51,12 @@ sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeo
         return STS_ERR_NULL_PTR; 
     }
 
+    if (len == 0U) return STS_OK;
+
     mock_uart_t *port = (mock_uart_t *)bus->port_handle;
+
     port->rx_call_count++; 
+    port->last_timeout_ms = timeout_ms; 
 
     if (port->rx_len < len) {
         return STS_ERR_TIMEOUT; 
@@ -59,9 +68,18 @@ sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeo
     if (remaining > 0) {
         memmove(port->rx_buffer, &port->rx_buffer[len], remaining);
     }
-    
     port->rx_len = remaining; 
 
+    return STS_OK;
+}
+sts_result_t mock_tx_bare_metal(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
+    if (bus == NULL || data == NULL) return STS_ERR_NULL_PTR;
+
+    dummy_uart_port.tx_call_count++;
+    if (len <= sizeof(dummy_uart_port.tx_buffer)) {
+        memcpy(dummy_uart_port.tx_buffer, data, len);
+        dummy_uart_port.tx_len = len;
+    }
     return STS_OK;
 }
 

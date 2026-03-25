@@ -53,13 +53,24 @@
  * ========================================================================== */
 #define TEST_MAX_TX_BUFFER          128U
 #define TEST_MAX_RX_BUFFER          128U
-#define TEST_TIMEOUT_MS             100U
+#define TEST_TIMEOUT_MS             10U
+#define TEST_TIMEOUT_LONG_MS        100U
+
+#define TEST_BUFFER_SIZE_SMALL      2U
+#define TEST_BUFFER_SIZE_MED        4U
+#define TEST_BUFFER_SIZE_LARGE      5U
 
 /* ==========================================================================
  * MOCK HARDWARE & IDENTITY CONFIGURATIONS
  * ========================================================================== */
 #define MOCK_BUS_ADDR_A             ((void*)0x1111)
 #define MOCK_BUS_ADDR_B             ((void*)0x2222)
+#define MOCK_GARBAGE_PTR_A          ((void*)0xDEADBEEFU)
+#define MOCK_GARBAGE_PTR_B          (sts_hal_transmit_t)0xBAD0F00DU
+#define MOCK_GARBAGE_PTR_C          (sts_hal_receive_t)0xCAFEBABEU
+
+#define STS_ONLINE_STATE            1U
+#define STS_OFFLINE_STATE           0U
 
 #define TEST_MIN_ID                 0U
 #define TEST_VALID_ID               10U
@@ -85,12 +96,18 @@
 #define INVALID_OPERATING_MODE      99U
 
 #define TEST_DATA_BYTE              0xAAU
+#define TEST_ALT_DATA_BYTE          0x55U
+#define TEST_DUMMY_BYTE_FF          0xFFU
+#define TEST_DUMMY_BYTE_EE          0xEEU
 #define TEST_DATA_LEN               1U
 
 #define TEST_VAL_8BIT               0x7FU
 #define TEST_VAL_16BIT              0x1234U
 #define TEST_VAL_16BIT_LOW          0x34U  /* Little-endian lower byte */
 #define TEST_VAL_16BIT_HIGH         0x12U  /* Little-endian upper byte */
+
+#define EXACTLY_ONE_CALL            1U
+#define RESET_CALL_COUNT            0U
 
 /* ==========================================================================
  * KINEMATIC TARGET BOUNDARIES & INTENTS
@@ -180,7 +197,7 @@ void tearDown(void) {
 
 
 void test_STS_Bus_Init_Success(void) {
-    sts_bus_t bus; 
+    sts_bus_t bus = {0};
     sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
     
     TEST_ASSERT_EQUAL(STS_OK, res);
@@ -194,37 +211,95 @@ void test_STS_Bus_Init_Null_Bus(void) {
     TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, res);
 }
 
+
+void test_STS_Bus_Init_Null_TX(void) {
+    sts_bus_t bus = {0};
+    sts_bus_t bus_snapshot = {0};
+
+    bus.port_handle = (void*)0xDEADBEEFU;
+    
+    memcpy(&bus_snapshot, &bus, sizeof(sts_bus_t));
+
+    sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, NULL, mock_rx);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, res);
+    TEST_ASSERT_EQUAL_MEMORY(&bus_snapshot, &bus, sizeof(sts_bus_t)); 
+}
+
+void test_STS_Bus_Init_Null_RX(void) {
+    sts_bus_t bus = {0};
+    sts_bus_t bus_snapshot = {0};
+
+    bus.port_handle = (void*)0xDEADBEEFU;
+    memcpy(&bus_snapshot, &bus, sizeof(sts_bus_t));
+
+    sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, NULL);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, res);
+    TEST_ASSERT_EQUAL_MEMORY(&bus_snapshot, &bus, sizeof(sts_bus_t)); 
+}
+void test_STS_Bus_Transmit_Rejects_Null_Data_Pointer(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    sts_result_t result = bus.transmit(&bus, NULL, TEST_DATA_LEN);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
+}
+
+void test_STS_Bus_Receive_Rejects_Null_Data_Pointer(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    sts_result_t result = bus.receive(&bus, NULL, TEST_DATA_LEN, TEST_TIMEOUT_MS);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
+}
+
+void test_STS_Bus_Transmit_Rejects_Null_Bus_Context(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    const uint8_t arbitrary_payload[] = { TEST_DUMMY_BYTE_FF };
+    const uint16_t payload_length = (uint16_t)sizeof(arbitrary_payload);
+
+    sts_result_t result = bus.transmit(NULL, arbitrary_payload, payload_length);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
+}
 /**
  * @brief Null Port Handle is ALLOWED.
  * This should succeed as some HALs/transports may not require a specific 
  * hardware handle.
  */
-void test_STS_Bus_Init_Null_TX(void) {
-    sts_bus_t bus;
-    sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, NULL, mock_rx);
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, res);
-}
-
-void test_STS_Bus_Init_Null_RX(void) {
-    sts_bus_t bus;
-    sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, NULL);
-    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, res);
-}
-
 void test_STS_Bus_Init_Null_Port_Handle_Succeeds(void) {
-    sts_bus_t bus;
+    sts_bus_t bus = {0};
     sts_result_t res = STS_Bus_Init(&bus, NULL, mock_tx, mock_rx);
     
     TEST_ASSERT_EQUAL(STS_OK, res);
     TEST_ASSERT_EQUAL_PTR(NULL, bus.port_handle);
 }
 
-void test_STS_Bus_Init_Overwrites_Garbage(void) {
+void test_STS_Bus_Transmit_With_Null_Port_Handle_Allowed_For_Bare_Metal(void) {
     sts_bus_t bus;
+  
+    (void)STS_Bus_Init(&bus, NULL, mock_tx_bare_metal, mock_rx); 
+
+    const uint8_t outbound_payload[] = { TEST_DATA_BYTE };
+    dummy_uart_port.tx_call_count = RESET_CALL_COUNT;
+
+    sts_result_t result = bus.transmit(&bus, outbound_payload, TEST_DATA_LEN);
     
-    bus.port_handle = (void*)0xDEADBEEF;
-    bus.transmit    = (sts_hal_transmit_t)0xBAD0F00D;
-    bus.receive     = (sts_hal_receive_t)0xCAFEBABE;
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, dummy_uart_port.tx_call_count);
+}
+
+void test_STS_Bus_Init_Overwrites_Garbage(void) {
+    sts_bus_t bus = {0};
+    
+    bus.port_handle = MOCK_GARBAGE_PTR_A;
+    bus.transmit    = MOCK_GARBAGE_PTR_B;
+    bus.receive     = MOCK_GARBAGE_PTR_C;
 
     sts_result_t res = STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
@@ -234,8 +309,8 @@ void test_STS_Bus_Init_Overwrites_Garbage(void) {
     TEST_ASSERT_EQUAL_PTR(mock_rx, bus.receive);
 }
 
-void test_STS_Bus_Init_Reinitialization(void) {
-    sts_bus_t bus;
+void test_STS_Bus_Init_Reinitialisation(void) {
+    sts_bus_t bus = {0};
     
     mock_uart_t mock_uart_1 = {0};
     mock_uart_t mock_uart_2 = {0};
@@ -250,25 +325,212 @@ void test_STS_Bus_Init_Reinitialization(void) {
     TEST_ASSERT_EQUAL_PTR(&mock_uart_2, bus.port_handle);
 }
 
-void test_STS_Bus_Interface_Execution(void) {
-    sts_bus_t bus;
-    uint8_t dummy_data = TEST_DATA_BYTE;
-    
+void test_STS_Bus_Transmit_Routes_To_HAL(void) {
+    sts_bus_t bus = {0};
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
-    dummy_uart_port.rx_len = TEST_DATA_LEN; 
+    uint8_t outbound_payload = TEST_DATA_BYTE;
+    dummy_uart_port.tx_call_count = 0U;
 
-    TEST_ASSERT_EQUAL(STS_OK, bus.transmit(&bus, &dummy_data, TEST_DATA_LEN));
-    TEST_ASSERT_EQUAL(STS_OK, bus.receive(&bus, &dummy_data, TEST_DATA_LEN, TEST_TIMEOUT_MS));
+    sts_result_t result = bus.transmit(&bus, &outbound_payload, TEST_DATA_LEN);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(1U, dummy_uart_port.tx_call_count);
+    TEST_ASSERT_EQUAL_UINT16(TEST_DATA_LEN, dummy_uart_port.tx_len);
+    TEST_ASSERT_EQUAL_HEX8(outbound_payload, dummy_uart_port.tx_buffer[0]);
 }
 
+void test_STS_Bus_Receive_Pulls_From_HAL(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    uint8_t inbound_mock_byte = TEST_ALT_DATA_BYTE;
+    dummy_uart_port.rx_buffer[0] = inbound_mock_byte;
+    dummy_uart_port.rx_len = TEST_DATA_LEN;
+    dummy_uart_port.rx_call_count = 0U;
+
+    uint8_t actual_received_byte = 0x00U;
+    sts_result_t result = bus.receive(&bus, &actual_received_byte, TEST_DATA_LEN, TEST_TIMEOUT_MS);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(1U, dummy_uart_port.rx_call_count);
+    TEST_ASSERT_EQUAL_HEX8(inbound_mock_byte, actual_received_byte);
+}
+
+void test_STS_Bus_Transmit_MultiByte_Payload(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    const uint8_t simulated_write_command[] = { 0xDEU, 0xADU, 0xBEU, 0xEFU };
+    const uint16_t payload_length = (uint16_t)sizeof(simulated_write_command);
+    
+    dummy_uart_port.tx_call_count = RESET_CALL_COUNT;
+
+    sts_result_t result = bus.transmit(&bus, simulated_write_command, payload_length);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, dummy_uart_port.tx_call_count);
+    TEST_ASSERT_EQUAL_UINT16(payload_length, dummy_uart_port.tx_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(simulated_write_command, dummy_uart_port.tx_buffer, payload_length);
+}
+
+void test_STS_Bus_Transmit_Bubbles_HAL_Error(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx_fail, mock_rx);
+
+    const uint8_t arbitrary_payload[] = { 0x11U, 0x22U };
+    const uint16_t payload_length = (uint16_t)sizeof(arbitrary_payload);
+
+    sts_result_t result = bus.transmit(&bus, arbitrary_payload, payload_length);
+
+    TEST_ASSERT_EQUAL(STS_ERR_TX_FAIL, result);
+}
+
+void test_STS_Bus_Receive_MultiByte_Payload(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    dummy_uart_port.last_timeout_ms = 0U;
+
+    const uint8_t simulated_hardware_response[] = { 0xAAU, 0xBBU, 0xCCU };
+    const uint16_t response_length = (uint16_t)sizeof(simulated_hardware_response);
+    
+    memcpy(dummy_uart_port.rx_buffer, simulated_hardware_response, response_length);
+    dummy_uart_port.rx_len = response_length;
+    dummy_uart_port.rx_call_count = RESET_CALL_COUNT;
+
+    uint8_t actual_received_data[sizeof(simulated_hardware_response)] = {0};
+    
+    sts_result_t result = bus.receive(&bus, actual_received_data, response_length, TEST_TIMEOUT_LONG_MS);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, dummy_uart_port.rx_call_count);
+    TEST_ASSERT_EQUAL_UINT32(TEST_TIMEOUT_LONG_MS, dummy_uart_port.last_timeout_ms);
+}
+
+void test_STS_Bus_Receive_Bubbles_Timeout(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    uint8_t actual_received_data[TEST_BUFFER_SIZE_SMALL] = {0}; 
+    const uint16_t requested_length = (uint16_t)sizeof(actual_received_data);
+    
+    sts_result_t result = bus.receive(&bus, actual_received_data, requested_length, TEST_TIMEOUT_MS);
+
+    TEST_ASSERT_EQUAL(STS_ERR_TIMEOUT, result);
+}
+
+void test_STS_Bus_Receive_Partial_Transfer_Yields_Timeout(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    const uint8_t partial_hardware_data[] = { 0xAAU, 0xBBU };
+    const uint16_t available_length = (uint16_t)sizeof(partial_hardware_data);
+    
+    memcpy(dummy_uart_port.rx_buffer, partial_hardware_data, available_length);
+    dummy_uart_port.rx_len = available_length;
+    dummy_uart_port.rx_call_count = RESET_CALL_COUNT;
+
+    const uint16_t requested_length = available_length + 2U; 
+    uint8_t actual_received_buffer[5] = {0}; 
+
+    sts_result_t result = bus.receive(&bus, actual_received_buffer, requested_length, TEST_TIMEOUT_MS);
+
+    TEST_ASSERT_EQUAL(STS_ERR_TIMEOUT, result);
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, dummy_uart_port.rx_call_count);
+    
+    TEST_ASSERT_EQUAL_HEX8(0x00U, actual_received_buffer[0]); 
+}
+
+void test_STS_Bus_Transmit_Zero_Length_Is_NoOp(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    const uint8_t some_data[] = { TEST_DUMMY_BYTE_FF };
+    dummy_uart_port.tx_call_count = RESET_CALL_COUNT;
+
+    sts_result_t result = bus.transmit(&bus, some_data, PAYLOAD_LEN_NONE);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(RESET_CALL_COUNT, dummy_uart_port.tx_call_count);
+}
+
+void test_STS_Bus_Receive_Zero_Length_Is_NoOp(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    uint8_t buffer[TEST_DATA_LEN] = { TEST_DATA_BYTE }; 
+    dummy_uart_port.rx_call_count = RESET_CALL_COUNT;
+    
+    sts_result_t result = bus.receive(&bus, buffer, PAYLOAD_LEN_NONE, TEST_TIMEOUT_LONG_MS);
+
+    TEST_ASSERT_EQUAL(STS_OK, result);
+    TEST_ASSERT_EQUAL_UINT32(RESET_CALL_COUNT, dummy_uart_port.rx_call_count);
+    TEST_ASSERT_EQUAL_HEX8(TEST_DATA_BYTE, buffer[0]); 
+}
+
+void test_STS_Bus_Transmit_Rejects_Uninitialised_Function_Pointer(void) {
+    sts_bus_t uninit_bus = {0}; 
+    const uint8_t data[] = { TEST_DUMMY_BYTE_FF };
+    
+    sts_result_t result = STS_Bus_Transmit(&uninit_bus, data, TEST_DATA_LEN);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
+}
+
+void test_STS_ExecuteCommand_Rejects_Uninitialised_Bus_Pointers(void) {
+    sts_bus_t corrupted_bus = {0};
+    corrupted_bus.port_handle = &dummy_uart_port; 
+    
+    test_servo.bus = &corrupted_bus;
+    
+    sts_cmd_t cmd = { .instruction = STS_INST_PING };
+
+   
+    sts_result_t result = sts_execute_command(&test_servo, &cmd);
+
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, result);
+}
+
+void test_STS_Bus_Receive_Timeout_Preserves_Full_Buffer_Integrity(void) {
+    sts_bus_t bus = {0};
+    (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
+
+    uint8_t rx_buffer[TEST_BUFFER_SIZE_MED];
+    memset(rx_buffer, TEST_DUMMY_BYTE_EE, sizeof(rx_buffer));
+    
+    uint8_t expected_untouched[TEST_BUFFER_SIZE_MED];
+    memset(expected_untouched, TEST_DUMMY_BYTE_EE, sizeof(expected_untouched));
+
+    dummy_uart_port.rx_len = TEST_BUFFER_SIZE_SMALL; 
+
+    sts_result_t result = bus.receive(&bus, rx_buffer, TEST_BUFFER_SIZE_MED, TEST_TIMEOUT_MS);
+
+    TEST_ASSERT_EQUAL(STS_ERR_TIMEOUT, result);
+    TEST_ASSERT_EQUAL_MEMORY(expected_untouched, rx_buffer, sizeof(rx_buffer));
+}
+
+void test_STS_Bus_Isolation_Multiple_Instances(void) {
+    sts_bus_t bus_A, bus_B;
+    mock_uart_t mock_port_A = {0}, mock_port_B = {0};
+
+    (void)STS_Bus_Init(&bus_A, &mock_port_A, mock_tx, mock_rx);
+    (void)STS_Bus_Init(&bus_B, &mock_port_B, mock_tx, mock_rx);
+
+    const uint8_t data[] = { TEST_DATA_BYTE };
+
+    bus_A.transmit(&bus_A, data, TEST_DATA_LEN);
+
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, mock_port_A.tx_call_count);
+    TEST_ASSERT_EQUAL_UINT32(RESET_CALL_COUNT, mock_port_B.tx_call_count);
+}
 /* ==========================================
  * TESTS: STS_Servo_Init
  * ========================================== */
 
 void test_STS_Servo_Init_Success(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
 
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
     
@@ -281,7 +543,7 @@ void test_STS_Servo_Init_Success(void) {
 }
 
 void test_STS_Servo_Init_Null_Servo(void) {
-    sts_bus_t bus;
+    sts_bus_t bus = {0};
     TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR, STS_Servo_Init(NULL, &bus, TEST_VALID_ID));
 }
 
@@ -291,8 +553,8 @@ void test_STS_Servo_Init_Null_Bus(void) {
 }
 
 void test_STS_Servo_Init_Invalid_ID(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
     // ID 254 and 255 are protocol reserved 
@@ -301,8 +563,8 @@ void test_STS_Servo_Init_Invalid_ID(void) {
 }
 
 void test_STS_Servo_Init_ID_Boundaries(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
     // Test minimum 
@@ -315,49 +577,55 @@ void test_STS_Servo_Init_ID_Boundaries(void) {
 }
 
 void test_STS_Servo_Init_Clears_Handle_State(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
-    servo.bus = (sts_bus_t*)0xDEADBEEFU;
-    servo.id = 0xAAU;
-    servo.is_online = 1U;
+    servo.bus = MOCK_GARBAGE_PTR_A;
+    servo.id = TEST_DATA_BYTE;
+    servo.is_online = STS_ONLINE_STATE;
 
     (void)STS_Servo_Init(&servo, &bus, TEST_VALID_ID);
 
     TEST_ASSERT_EQUAL_PTR(&bus, servo.bus);
     TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, servo.id);
-    TEST_ASSERT_EQUAL_UINT8(0U, servo.is_online);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE_STATE, servo.is_online);
 }
 
 void test_STS_Servo_Init_Atomic_Failure(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
+    sts_servo_t servo_snapshot = {0}; 
+
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
-
     (void)STS_Servo_Init(&servo, &bus, TEST_VALID_ID);
+    
+    servo.is_online = STS_ONLINE; 
 
-    // Failed init should leave existing state untouched 
-    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, STS_Servo_Init(&servo, &bus, STS_ID_BROADCAST_ASYNC));
-    TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, servo.id);
+    memcpy(&servo_snapshot, &servo, sizeof(sts_servo_t));
+
+    sts_result_t res = STS_Servo_Init(&servo, &bus, STS_ID_BROADCAST_ASYNC);
+
+    TEST_ASSERT_EQUAL(STS_ERR_INVALID_PARAM, res);
+    TEST_ASSERT_EQUAL_MEMORY(&servo_snapshot, &servo, sizeof(sts_servo_t));
 }
 
 void test_STS_Servo_Init_Reset_Online_Status(void) {
-    sts_bus_t bus;
-    sts_servo_t servo;
+    sts_bus_t bus = {0};
+    sts_servo_t servo = {0};
     (void)STS_Bus_Init(&bus, &dummy_uart_port, mock_tx, mock_rx);
 
     (void)STS_Servo_Init(&servo, &bus, TEST_VALID_ID);
-    servo.is_online = 1U; 
+    servo.is_online = STS_ONLINE_STATE; 
 
     // Re-init must reset status to offline 
     (void)STS_Servo_Init(&servo, &bus, TEST_VALID_ID);
-    TEST_ASSERT_EQUAL_UINT8(0U, servo.is_online);
+    TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE_STATE, servo.is_online);
 }
 
 void test_STS_Servo_Init_Multi_Bus_Link(void) {
-    sts_bus_t bus_a, bus_b;
-    sts_servo_t servo_a, servo_b;
+    sts_bus_t bus_a, bus_b = {0};
+    sts_servo_t servo_a, servo_b = {0};
     
     (void)STS_Bus_Init(&bus_a, MOCK_BUS_ADDR_A, mock_tx, mock_rx);
     (void)STS_Bus_Init(&bus_b, MOCK_BUS_ADDR_B, mock_tx, mock_rx);
@@ -683,7 +951,6 @@ void test_STS_Ping_Bus_Busy_Sets_Offline(void) {
     TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, res);
     TEST_ASSERT_EQUAL_UINT8(STS_OFFLINE, test_servo.is_online);
 
-    test_bus.transmit = mock_tx;
 }
 
 void test_STS_Ping_Null_Servo_Guard(void) {

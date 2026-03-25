@@ -23,9 +23,25 @@ extern void test_STS_Bus_Init_Null_Bus(void);
 extern void test_STS_Bus_Init_Null_TX(void);
 extern void test_STS_Bus_Init_Null_RX(void);
 extern void test_STS_Bus_Init_Null_Port_Handle_Succeeds(void);
+extern void test_STS_Bus_Transmit_Rejects_Null_Data_Pointer(void);
+extern void test_STS_Bus_Receive_Rejects_Null_Data_Pointer(void);
+extern void test_STS_Bus_Transmit_Rejects_Null_Bus_Context(void);
+extern void test_STS_Bus_Transmit_With_Null_Port_Handle_Allowed_For_Bare_Metal(void);
 extern void test_STS_Bus_Init_Overwrites_Garbage(void);
-extern void test_STS_Bus_Init_Reinitialization(void);
-extern void test_STS_Bus_Interface_Execution(void);
+extern void test_STS_Bus_Init_Reinitialisation(void);
+extern void test_STS_Bus_Transmit_Routes_To_HAL(void);
+extern void test_STS_Bus_Receive_Pulls_From_HAL(void);
+extern void test_STS_Bus_Transmit_MultiByte_Payload(void);
+extern void test_STS_Bus_Transmit_Bubbles_HAL_Error(void);
+extern void test_STS_Bus_Receive_MultiByte_Payload(void);
+extern void test_STS_Bus_Receive_Bubbles_Timeout(void);
+extern void test_STS_Bus_Receive_Partial_Transfer_Yields_Timeout(void);
+extern void test_STS_Bus_Transmit_Zero_Length_Is_NoOp(void);
+extern void test_STS_Bus_Receive_Zero_Length_Is_NoOp(void);
+extern void test_STS_Bus_Transmit_Rejects_Uninitialised_Function_Pointer(void);
+extern void test_STS_Bus_Receive_Timeout_Preserves_Full_Buffer_Integrity(void);
+extern void test_STS_Bus_Isolation_Multiple_Instances(void);
+ 
 
 /* --- Servo Initialisation Tests --- */
 extern void test_STS_Servo_Init_Success(void);
@@ -60,6 +76,7 @@ extern void test_STS_ExecuteCommand_TX_Buffer_Overflow(void);
 extern void test_STS_ExecuteCommand_Zero_Expected_RX(void);
 extern void test_STS_ExecuteCommand_Broadcast_Forces_Early_Exit(void);
 extern void test_STS_ExecuteCommand_Null_Cmd_Guard(void);
+extern void test_STS_ExecuteCommand_Rejects_Uninitialised_Bus_Pointers(void);
 
 /* --- Servo Ping Tests --- */
 extern void test_STS_Ping_Success(void);

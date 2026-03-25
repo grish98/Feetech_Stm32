@@ -37,6 +37,8 @@ typedef struct {
     uint8_t tx_buffer[256]; /**< Capture what the driver sends */
     uint16_t tx_len;        /**< Length of captured TX data */
     uint32_t tx_call_count; /**< Track how many times TX was called */
+
+    uint32_t last_timeout_ms;
 } mock_uart_t;
 
 extern mock_uart_t dummy_uart_port;
@@ -69,6 +71,8 @@ sts_result_t mock_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len);
  * @return STS_ERR_TIMEOUT if port->rx_len is less than len.
  */
 sts_result_t mock_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms);
+
+sts_result_t mock_tx_bare_metal(sts_bus_t *bus, const uint8_t *data, uint16_t len);
 
 /** 
  * @brief Mock Transmit Function that simulates a hardware failure (e.g., cable disconnected).

@@ -52,6 +52,9 @@ struct sts_bus_s {
     void *port_handle;           /**< Opaque pointer to the physical UART hardware */
     sts_hal_transmit_t transmit; /**< Injected TX function */
     sts_hal_receive_t receive;   /**< Injected RX function */
+
+    uint8_t tx_buf[STS_MAX_TX_BUFFER];
+    uint8_t rx_buf[STS_MAX_RX_BUFFER];
 };
 
 /**
@@ -80,6 +83,18 @@ sts_result_t STS_Bus_Init(sts_bus_t *bus, void *port_handle, sts_hal_transmit_t 
  * STS_ERR_INVALID_PARAM if ID is 254 or 255.
  */
 sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id);
+
+/**
+ * @brief  Safe wrapper for HAL transmission.
+ * @return STS_ERR_NULL_PTR if function pointer is missing, else HAL result.
+ */
+sts_result_t STS_Bus_Transmit(sts_bus_t *bus, const uint8_t *data, uint16_t len);
+
+/**
+ * @brief  Safe wrapper for HAL reception.
+ * @return STS_ERR_NULL_PTR if function pointer is missing, else HAL result.
+ */
+sts_result_t STS_Bus_Receive(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout);
 
 
 /**
@@ -129,5 +144,6 @@ typedef struct {
     uint8_t *rx_params_out;
     uint16_t rx_params_size;
     uint16_t *rx_param_len_out;
+    uint32_t timeout_ms;
 } sts_cmd_t;
 /** @endcond */
