@@ -3,8 +3,6 @@
  * @file           : sts_servo.c
  * @brief          : STS Service Layer Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-22
- * @version        : 0.3.0
  ******************************************************************************
  * @details
  * This module implements the high-level service functions for the Feetech STS
@@ -40,34 +38,31 @@
 #include <string.h>
 
 #ifdef UNIT_TESTING
+    #include "sts_servo_internal.h" 
     #define STATIC_TESTABLE 
 #else
     #define STATIC_TESTABLE static
 #endif
 
-/**
- * @brief  Safe wrapper for HAL transmission.
- * @return STS_ERR_NULL_PTR if function pointer is missing, else HAL result.
- */
 sts_result_t STS_Bus_Transmit(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
-    if (bus == NULL || bus->transmit == NULL) {
+    if (bus == NULL || bus->transmit == NULL|| data == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    if (len == 0U) return STS_OK; 
+    if (len == 0U) {
+        return STS_OK; 
+    }
     
     return bus->transmit(bus, data, len);
 }
 
-/**
- * @brief  Safe wrapper for HAL reception.
- * @return STS_ERR_NULL_PTR if function pointer is missing, else HAL result.
- */
+
 sts_result_t STS_Bus_Receive(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout) {
-    if (bus == NULL || bus->receive == NULL) {
+    if (bus == NULL || bus->receive == NULL|| data == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    if (len == 0U) return STS_OK; 
-
+    if (len == 0U) {
+        return STS_OK; 
+    }
     return bus->receive(bus, data, len, timeout);
 }
 

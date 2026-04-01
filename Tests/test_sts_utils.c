@@ -20,6 +20,7 @@
  */
 #include "test_sts_utils.h"
 #include <string.h>
+#include "unity.h"
 
 mock_uart_t dummy_uart_port = {0};
 
@@ -112,4 +113,12 @@ void simulate_servo_response(uint8_t id, uint8_t status, const uint8_t* params,
     uint16_t total_len = (uint16_t)STS_MIN_PACKET_SIZE + p_len;
     (void)sts_calculate_checksum(out_buf, total_len, &cs);
     out_buf[total_len - 1U] = cs;
+}
+
+void TEST_ASSERT_BUFFER_UNCHANGED(const uint8_t *buffer, size_t size, uint8_t expected_fill) {
+    char error_msg[64];
+    for(size_t i = 0; i < size; i++) {
+        snprintf(error_msg, sizeof(error_msg), "Buffer corrupted at index %zu", i);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(expected_fill, buffer[i], error_msg);
+    }
 }
