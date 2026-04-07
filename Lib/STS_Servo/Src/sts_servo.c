@@ -189,7 +189,8 @@ sts_result_t STS_servo_ping(sts_servo_t *servo) {
         .expected_rx_len  = STS_ACK_BASE_LEN, 
         .rx_params_out    = NULL,
         .rx_params_size   = 0U,
-        .rx_param_len_out = NULL
+        .rx_param_len_out = NULL,
+        .timeout_ms      = STS_DEFAULT_TIMEOUT_MS
     };
 
     sts_result_t res = sts_execute_command(servo, &cmd);

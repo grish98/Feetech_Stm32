@@ -31,8 +31,9 @@ set(DRIVER_SOURCES
 # STM32 Only 
 set(FIRMWARE_SOURCES
     Core/Src/main.c
-    Core/Src/stm32f4xx_it.c
-    Core/Src/system_stm32f4xx.c
+    Core/Src/stm32f1xx_it.c
+    Lib/STS_Servo/Ports/sts_ports_stm32.c
+    App/Src/app_main.c           
 )
 
 # PC Only 
@@ -51,14 +52,13 @@ set(TEST_SERVO_SOURCES
 )
 
 # Detect if we are using the ARM Toolchain or Native (Windows)
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_TARGET STREQUAL "arm-none-eabi")
+if(CMAKE_C_COMPILER MATCHES "arm-none-eabi")
     set(IS_ARM_BUILD TRUE)
     enable_language(C ASM)
 else()
     set(IS_ARM_BUILD FALSE)
     enable_language(C)
 endif()
-
 
 
 if(IS_ARM_BUILD)
@@ -69,7 +69,9 @@ if(IS_ARM_BUILD)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
         Core/Inc
         Lib/STS_Servo/Inc  
+         Lib/STS_Servo/Ports
         App/Inc
+
     )
 else()
     message("Configuring for Native (Windows/Host)")
