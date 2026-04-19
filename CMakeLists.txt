@@ -33,7 +33,7 @@ set(FIRMWARE_SOURCES
     Core/Src/main.c
     Core/Src/stm32f1xx_it.c
     Lib/STS_Servo/Ports/sts_ports_stm32.c
-    App/Src/app_main.c           
+    App/Src/app_main.c        
 )
 
 # PC Only 
@@ -63,7 +63,15 @@ endif()
 
 if(IS_ARM_BUILD)
     message("Configuring for STM32 (ARM)")
+
+    list(APPEND FIRMWARE_SOURCES "startup_stm32f103xb.s")
+
     add_executable(${CMAKE_PROJECT_NAME} ${FIRMWARE_SOURCES} ${DRIVER_SOURCES})
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE STM32F103xB)
+    #target_link_options(${CMAKE_PROJECT_NAME} PRIVATE 
+    #    "-T${CMAKE_CURRENT_SOURCE_DIR}/STM32F103XX_FLASH.ld"
+    #)
+
     add_subdirectory(cmake/stm32cubemx)
     target_link_libraries(${CMAKE_PROJECT_NAME} stm32cubemx)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
