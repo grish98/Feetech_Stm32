@@ -6,7 +6,6 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
@@ -33,7 +32,10 @@ set(FIRMWARE_SOURCES
     Core/Src/main.c
     Core/Src/stm32f1xx_it.c
     Lib/STS_Servo/Ports/sts_ports_stm32.c
-    App/Src/app_main.c        
+    App/Src/app_main.c 
+    Segger_RTT/SEGGER_RTT_printf.c
+    Segger_RTT/SEGGER_RTT.c    
+    Hardware_Tests/Hw_Tests.c      
 )
 
 # PC Only 
@@ -77,8 +79,10 @@ if(IS_ARM_BUILD)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
         Core/Inc
         Lib/STS_Servo/Inc  
-         Lib/STS_Servo/Ports
+        Lib/STS_Servo/Ports
         App/Inc
+        Segger_RTT
+        Hardware_Tests
 
     )
 else()
@@ -93,6 +97,7 @@ else()
         Tests           
         Tests/Unity
         App/Inc
+
     )
     add_test(NAME ProtocolTests COMMAND test_protocol)
 
@@ -103,6 +108,7 @@ else()
         Tests           
         Tests/Unity
         App/Inc
+
     )
     target_compile_definitions(test_servo PRIVATE UNIT_TESTING)
     add_test(NAME ServoTests COMMAND test_servo)

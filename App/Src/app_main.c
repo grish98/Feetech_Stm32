@@ -16,18 +16,19 @@ Note: if not using Wave Share Bus Servo adapter, would need to be in half duplex
 #include "sts_ports_stm32.h"
 #include "main.h"
 #include <stdint.h>
+#include "Hw_Tests.h"
 
 extern UART_HandleTypeDef huart2;
 
 
 void AppMain(void) {
-  
+
 static sts_bus_t servo_bus = {0};
 static sts_servo_t servo_1 = {0};
 
   STS_Bus_Init(&servo_bus, &huart2, STM32_UART_Transmit, STM32_UART_Receive);
   STS_Servo_Init(&servo_1, &servo_bus, 2);
-
+  STS_RunIntegrationTests(&servo_1);
   while (1)
   {
     sts_result_t res = STS_servo_ping(&servo_1); 
@@ -35,15 +36,10 @@ static sts_servo_t servo_1 = {0};
     {
       //fast blink for success
       HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-      //movement test
-      uint16_t pos1= 2048;
-      STS_SetTargetPosition(&servo_1, pos1);
-      HAL_Delay(1000); 
-      STS_SetTargetPosition(&servo_1, 0);
-      HAL_Delay(1000); 
+      HAL_Delay(50); 
+   
     }
     else
-    
     {
       // Slow blink for failure
         HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); 
