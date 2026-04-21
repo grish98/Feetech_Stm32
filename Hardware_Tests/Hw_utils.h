@@ -13,8 +13,11 @@ typedef struct {
     sts_result_t last_error_code;
     
     uint16_t pos;
+    int16_t  peak_load;   
+    int16_t  holding_load; //Load at target Pos
     uint8_t temp;
     uint8_t volt;
+    
 
 } sts_test_report_t;
 
