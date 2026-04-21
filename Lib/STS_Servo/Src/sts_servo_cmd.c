@@ -166,7 +166,21 @@ sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out) {
     if (servo == NULL || load_out == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    return STS_Read16(servo, STS_REG_PRESENT_LOAD, (uint16_t*)load_out);
+
+    uint16_t raw_load = 0;
+    sts_result_t res = STS_Read16(servo, STS_REG_PRESENT_LOAD, &raw_load);
+
+    if (res == STS_OK) {
+        int16_t magnitude = raw_load & 0x3FF; 
+        
+        if (raw_load & (1 << 10)) {
+            *load_out = -magnitude; // CCW is negative
+        } else {
+            *load_out = magnitude;  // CW is positive
+        }
+    }
+
+    return res;
 }
 
 sts_result_t STS_GetPresentVoltage(sts_servo_t *servo, uint8_t *voltage_out) {
