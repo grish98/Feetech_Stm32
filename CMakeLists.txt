@@ -35,7 +35,8 @@ set(FIRMWARE_SOURCES
     App/Src/app_main.c 
     Segger_RTT/SEGGER_RTT_printf.c
     Segger_RTT/SEGGER_RTT.c    
-    Hardware_Tests/Hw_Tests.c      
+    Hardware_Tests/Hw_Tests.c  
+    Hardware_Tests/Hw_utils.c    
 )
 
 # PC Only 

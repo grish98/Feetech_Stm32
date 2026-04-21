@@ -17,7 +17,6 @@ sts_result_t STM32_UART_Transmit(sts_bus_t *bus, const uint8_t *data, uint16_t l
     HAL_StatusTypeDef status = HAL_UART_Transmit(huart, (uint8_t*)data, len, 10);
 
     if (status == HAL_OK) {
-        // Excellent practice: Wait for the physical transmission to finish
         while (__HAL_UART_GET_FLAG(huart, UART_FLAG_TC) == RESET);
         return STS_OK;
     }
@@ -48,4 +47,12 @@ sts_result_t STM32_UART_Receive(sts_bus_t *bus, uint8_t *data, uint16_t len, uin
         default:          
             return STS_ERR_RX_FAIL;
     }
+}
+
+void STS_Delay_ms(uint32_t ms) {
+    HAL_Delay(ms);
+}
+
+uint32_t STS_GetTick_ms(void) {
+    return HAL_GetTick();
 }
