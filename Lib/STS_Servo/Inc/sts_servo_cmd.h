@@ -3,8 +3,6 @@
  * @file           : sts_servo_cmd.h
  * @brief          : STS Servo Command API
  * @author         : Grisham Balloo
- * @date           : 2026-03-21
- * @version        : 0.2.0
  ******************************************************************************
  * @details
  * Declares the high-level command API for Feetech STS servo control.
@@ -89,7 +87,7 @@ sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out);
  * @param[out] speed_out Pointer to store the 16-bit speed value.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
-sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, uint16_t *speed_out);
+sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out);
 
 /**
  * @brief Sets the target speed and direction of the servo.

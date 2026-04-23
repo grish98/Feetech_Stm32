@@ -3,8 +3,7 @@
  * @file           : sts_registers.h
  * @brief          : Feetech STS Series Register Map and Instruction Set
  * @author         : Grisham Balloo
- * @date           : 2026-03-19
- * @version        : 1.0.0
+
  ******************************************************************************
  * @details
  * This header defines the internal memory map and command set for the 
@@ -112,8 +111,17 @@
  * @brief Masks for parsing target and present speed registers.
  * @{ 
  */
-#define STS_SPEED_DIRECTION_BIT   0x8000U  /**< Bit 15: 0 = CCW (Forward), 1 = CW (Reverse) */
+#define STS_SPEED_DIRECTION_BIT   0x8000U  /**< Bit 15: 0 = CCW (Positive), 1 = CW (Negative) */
 #define STS_SPEED_MAGNITUDE_MASK  0x7FFFU  /**< Bits 0-14: Raw speed magnitude value */
+/** @} */
+
+
+/** * @name Load Register Bitmasks (Address 0x2A)
+ * @brief Masks for parsing present load telemetry.
+ * @(
+ */
+#define STS_LOAD_DIRECTION_BIT    0x0400U  /**< Bit 10: 0 = CW (Negative), 1 = CCW (Positive) */
+#define STS_LOAD_MAGNITUDE_MASK   0x03FF   /**< Bits 0-9: Raw load magnitude value */
 /** @} */
 
 /**

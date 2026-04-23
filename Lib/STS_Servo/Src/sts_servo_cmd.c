@@ -3,8 +3,6 @@
  * @file           : sts_servo_cmd.c
  * @brief          : STS Servo Command Implementation
  * @author         : Grisham Balloo
- * @date           : 2026-03-21
- * @version        : 0.2.0
  ******************************************************************************
  * @details
  * Implements the high-level command set for Feetech STS servo control,
@@ -62,6 +60,7 @@ sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out) 
     return STS_Read16(servo, STS_REG_PRESENT_POSITION, position_out);
 }
 
+
 sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
@@ -74,12 +73,22 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
     uint16_t reg_val = speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
-
-sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, uint16_t *speed_out) {
+sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out) {
     if (servo == NULL || speed_out == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    return STS_Read16(servo, STS_REG_PRESENT_SPEED, speed_out);
+    uint16_t raw_val = 0U;
+    sts_result_t res = STS_Read16(servo, STS_REG_PRESENT_SPEED, &raw_val);
+
+    if (res == STS_OK) {
+        int16_t true_speed = (int16_t)(raw_val & STS_SPEED_MAGNITUDE_MASK);
+        if (raw_val & STS_SPEED_DIRECTION_BIT) {
+            *speed_out = -true_speed; 
+        } else {
+            *speed_out = true_speed;  
+        }
+    }
+    return res;
 }
 
 sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration) {
@@ -167,19 +176,18 @@ sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out) {
         return STS_ERR_NULL_PTR;
     }
 
-    uint16_t raw_load = 0;
+    uint16_t raw_load = 0U;
     sts_result_t res = STS_Read16(servo, STS_REG_PRESENT_LOAD, &raw_load);
 
-    if (res == STS_OK) {
-        int16_t magnitude = raw_load & 0x3FF; 
+   if (res == STS_OK) {
+        int16_t magnitude = (int16_t)(raw_load & STS_LOAD_MAGNITUDE_MASK); 
         
-        if (raw_load & (1 << 10)) {
-            *load_out = -magnitude; // CCW is negative
+        if (raw_load & STS_LOAD_DIRECTION_BIT) {
+            *load_out = magnitude; 
         } else {
-            *load_out = magnitude;  // CW is positive
+            *load_out = -magnitude;  
         }
     }
-
     return res;
 }
 
