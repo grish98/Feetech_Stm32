@@ -27,7 +27,13 @@ static sts_bus_t servo_bus = {0};
 static sts_servo_t servo_1 = {0};
 
   STS_Bus_Init(&servo_bus, &huart2, STM32_UART_Transmit, STM32_UART_Receive);
+  servo_bus.flush_rx   = STM32_UART_FlushRx;
+  servo_bus.max_retries = 2U;
   STS_Servo_Init(&servo_1, &servo_bus, 2);
+
+  STS_SetTorqueEnable(&servo_1, 1);
+  HAL_Delay(50);
+
   STS_RunIntegrationTests(&servo_1);
   while (1)
   {

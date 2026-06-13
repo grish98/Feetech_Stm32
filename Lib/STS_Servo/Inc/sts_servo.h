@@ -44,14 +44,18 @@ typedef struct sts_servo_t sts_servo_t;
  */
 typedef sts_result_t (*sts_hal_transmit_t)(sts_bus_t *bus, const uint8_t *data, uint16_t len);
 typedef sts_result_t (*sts_hal_receive_t)(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms);
+typedef sts_result_t (*sts_hal_flush_rx_t)(sts_bus_t *bus);
 
 /**
  * @brief STS Shared Bus Handle
  */
 struct sts_bus_s {
-    void *port_handle;           /**< Opaque pointer to the physical UART hardware */
-    sts_hal_transmit_t transmit; /**< Injected TX function */
-    sts_hal_receive_t receive;   /**< Injected RX function */
+    void *port_handle;              /**< Opaque pointer to the physical UART hardware */
+    sts_hal_transmit_t transmit;    /**< Injected TX function */
+    sts_hal_receive_t receive;      /**< Injected RX function */
+    sts_hal_flush_rx_t flush_rx;    /**<  drain stale RX bytes between retries. NULL = no-op. */
+
+    uint8_t max_retries;            /**< Transaction retry count on transport error (0 = no retries) */
 
     uint8_t tx_buf[STS_MAX_TX_BUFFER];
     uint8_t rx_buf[STS_MAX_RX_BUFFER];
@@ -95,6 +99,13 @@ sts_result_t STS_Bus_Transmit(sts_bus_t *bus, const uint8_t *data, uint16_t len)
  * @return STS_ERR_NULL_PTR if function pointer is missing, else HAL result.
  */
 sts_result_t STS_Bus_Receive(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout);
+
+/**
+ * @brief  Drains stale bytes from the RX buffer between transaction retries.
+ *         No-op if the port did not register a flush_rx function.
+ * @return STS_OK always (flush failures are non-fatal).
+ */
+sts_result_t STS_Bus_FlushRx(sts_bus_t *bus);
 
 
 /**
