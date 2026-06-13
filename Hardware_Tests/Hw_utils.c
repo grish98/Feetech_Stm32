@@ -19,7 +19,7 @@ sts_result_t STS_Setup(sts_servo_t *servo) {
     if (STS_GetPresentPosition(servo, &current_pos) == STS_OK) {
         if (abs(current_pos - TEARDOWN_TARGET_POS) <= 10) {
             SEGGER_RTT_WriteString(0, "Servo already at home position. Skipping move.\n");
-            return STS_OK; // Bail out early, a perfect success!
+            return STS_OK; 
         }
     }
 

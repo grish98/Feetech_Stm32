@@ -4,6 +4,7 @@
 #include "sts_protocol.h"
 #include "sts_servo.h"
 #include "SEGGER_RTT.h"
+
 typedef struct {
     uint8_t total_test_run;
     uint8_t tests_passed;
@@ -17,6 +18,7 @@ typedef struct {
     int16_t  holding_load; //Load at target Pos
     uint8_t temp;
     uint8_t volt;
+    int16_t peak_speed;
     
 
 } sts_test_report_t;
