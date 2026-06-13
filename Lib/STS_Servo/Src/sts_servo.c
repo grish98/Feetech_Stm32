@@ -169,6 +169,7 @@ sts_result_t STS_Servo_Init(sts_servo_t *servo, sts_bus_t *bus, uint8_t id) {
     servo->bus = bus;
     servo->id = id;
     servo->is_online = STS_OFFLINE; 
+    servo->current_mode = STS_MODE_POSITION;
 
     return STS_OK;
 }
