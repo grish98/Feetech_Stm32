@@ -34,11 +34,11 @@ sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode)
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    
+
     if (mode > STS_MODE_STEP) {
         return STS_ERR_INVALID_PARAM;
     }
-    
+
     return STS_Write8(servo, STS_REG_OPERATION_MODE, (uint8_t)mode);
 }
 
@@ -60,19 +60,19 @@ sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out) 
     return STS_Read16(servo, STS_REG_PRESENT_POSITION, position_out);
 }
 
-
 sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
-   
+
     if (speed > STS_MAX_SPEED) {
         return STS_ERR_INVALID_PARAM;
     }
-    
-    uint16_t reg_val = speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+
+    uint16_t reg_val = speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
+
 sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out) {
     if (servo == NULL || speed_out == NULL) {
         return STS_ERR_NULL_PTR;
@@ -81,11 +81,12 @@ sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out) {
     sts_result_t res = STS_Read16(servo, STS_REG_PRESENT_SPEED, &raw_val);
 
     if (res == STS_OK) {
-        int16_t true_speed = (int16_t)(raw_val & STS_SPEED_MAGNITUDE_MASK);
+        /* Encoder runs at 2× position resolution; divide raw ticks/s by 2 to get steps/s. */
+        int16_t true_speed = (int16_t)((raw_val & STS_SPEED_MAGNITUDE_MASK) / 2U);
         if (raw_val & STS_SPEED_DIRECTION_BIT) {
-            *speed_out = -true_speed; 
+            *speed_out = -true_speed;
         } else {
-            *speed_out = true_speed;  
+            *speed_out = true_speed;
         }
     }
     return res;
@@ -105,12 +106,12 @@ sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t 
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    
+
     if (pwm > STS_MAX_PWM) {
         return STS_ERR_INVALID_PARAM;
     }
-    
-    uint16_t reg_val = pwm | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+
+    uint16_t reg_val = pwm | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
 
@@ -118,15 +119,14 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
-    
+
     if (steps > STS_MAX_STEP) {
         return STS_ERR_INVALID_PARAM;
     }
-    
-    uint16_t reg_val = steps | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT); 
+
+    uint16_t reg_val = steps | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_POSITION, reg_val);
 }
-
 
 sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
     if (servo == NULL) {
@@ -167,10 +167,6 @@ sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit) {
     return STS_Write16(servo, STS_REG_TORQUE_LIMIT, limit);
 }
 
-/* ==========================================================================
- * TELEMETRY & FEEDBACK COMMANDS
- * ========================================================================== */
-
 sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out) {
     if (servo == NULL || load_out == NULL) {
         return STS_ERR_NULL_PTR;
@@ -179,13 +175,13 @@ sts_result_t STS_GetPresentLoad(sts_servo_t *servo, int16_t *load_out) {
     uint16_t raw_load = 0U;
     sts_result_t res = STS_Read16(servo, STS_REG_PRESENT_LOAD, &raw_load);
 
-   if (res == STS_OK) {
-        int16_t magnitude = (int16_t)(raw_load & STS_LOAD_MAGNITUDE_MASK); 
-        
+    if (res == STS_OK) {
+        int16_t magnitude = (int16_t)(raw_load & STS_LOAD_MAGNITUDE_MASK);
+
         if (raw_load & STS_LOAD_DIRECTION_BIT) {
-            *load_out = magnitude; 
+            *load_out = magnitude;
         } else {
-            *load_out = -magnitude;  
+            *load_out = -magnitude;
         }
     }
     return res;
@@ -212,7 +208,6 @@ sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out) {
     return STS_Read8(servo, STS_REG_MOVING_FLAG, status_out);
 }
 
-
 sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
@@ -228,10 +223,8 @@ sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id) {
     if (new_id > STS_ID_BROADCAST_SYNC) {
         return STS_ERR_INVALID_PARAM;
     }
-    
-    /* * Note: The user MUST call STS_UnlockEEPROM() before calling this, 
-     * and STS_LockEEPROM() immediately after. We do not bundle them here 
-     * to prevent accidental flash wear if this function is misused.
-     */
+
+    /* Caller must unlock EEPROM before this and lock it immediately after.
+     * Not bundled here to prevent accidental flash wear on misuse. */
     return STS_Write8(servo, STS_REG_ID, new_id);
 }
