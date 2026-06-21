@@ -5,6 +5,21 @@
 #include "sts_servo.h"
 #include "SEGGER_RTT.h"
 
+#define TELEM_MAX_SAMPLES  512U
+#define ACCEL_DEFAULT      0U
+
+typedef struct {
+    int16_t  load;
+    uint16_t pos;
+} telem_sample_t;
+
+typedef struct {
+    int16_t  mean;
+    int16_t  peak;
+    uint16_t stddev;
+    uint16_t n;
+} load_stats_t;
+
 typedef struct {
     uint8_t total_test_run;
     uint8_t tests_passed;
@@ -12,24 +27,27 @@ typedef struct {
 
     uint8_t last_failed_test_id;
     sts_result_t last_error_code;
-    
-    uint16_t pos;
-    int16_t  peak_load;   
-    int16_t  holding_load; //Load at target Pos
-    uint8_t temp;
-    uint8_t volt;
-    int16_t peak_speed;
-    
 
+    uint16_t pos;
+    int16_t  holding_load;
+    uint8_t  temp;
+    uint8_t  volt;
 } sts_test_report_t;
 
 extern sts_test_report_t test_report;
 
+extern telem_sample_t telem_buf[TELEM_MAX_SAMPLES];
+extern uint16_t       telem_count;
+
+void         Telem_Reset(void);
+void         Telem_Record(int16_t load, uint16_t pos);
+load_stats_t Telem_ComputeStats(void);
+
 #define TEST_ASSERT(condition, test_id, error_code, error_msg) \
     do { \
-       test_report.total_test_run++; \
+        test_report.total_test_run++; \
         if (condition) { \
-           test_report.tests_passed++; \
+            test_report.tests_passed++; \
             SEGGER_RTT_printf(0, "Pass Test %d\n", test_id); \
         } else { \
             test_report.tests_failed++; \
@@ -40,5 +58,5 @@ extern sts_test_report_t test_report;
         } \
     } while(0)
 
-    sts_result_t STS_Setup(sts_servo_t *servo);
-    sts_result_t STS_Teardown(sts_servo_t *servo);
+sts_result_t STS_Setup(sts_servo_t *servo);
+sts_result_t STS_Teardown(sts_servo_t *servo);
