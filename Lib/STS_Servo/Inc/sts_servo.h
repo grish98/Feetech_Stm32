@@ -57,6 +57,13 @@ struct sts_bus_s {
 
     uint8_t max_retries;            /**< Transaction retry count on transport error (0 = no retries) */
 
+    /* Error counters — never reset automatically; read via snapshot deltas.
+     * Analogous to CAN TEC/REC: tolerance without counters is blindness. */
+    uint32_t total_transactions; /**< Every call to sts_execute_command */
+    uint32_t total_retries;      /**< Attempts after the first (each retry = +1) */
+    uint32_t retry_saves;        /**< Transactions that failed then succeeded on retry */
+    uint32_t hard_failures;      /**< Transactions that exhausted all attempts */
+
     uint8_t tx_buf[STS_MAX_TX_BUFFER];
     uint8_t rx_buf[STS_MAX_RX_BUFFER];
 };

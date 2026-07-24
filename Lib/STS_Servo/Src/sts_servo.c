@@ -115,11 +115,16 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
     static uint8_t trash_bin[STS_MAX_RX_BUFFER];
     static uint16_t dummy_len;
 
+    servo->bus->total_transactions++;
+    uint8_t needed_retry = 0U;
+
     uint8_t max_attempts = servo->bus->max_retries + 1U;
 
     for (uint8_t attempt = 0U; attempt < max_attempts; attempt++) {
 
         if (attempt > 0U) {
+            servo->bus->total_retries++;
+            needed_retry = 1U;
             STS_Bus_FlushRx(servo->bus);
         }
 
@@ -159,8 +164,17 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
         res = sts_parse_response(servo->id, rx_buf, total_expected_size,
                                  safe_out, safe_size, safe_len);
 
-        /*Hardware error should not trigger a retry */
-        if (res == STS_OK || res == STS_ERR_HARDWARE) break;
+        /* Hardware error is a definitive servo response — do not retry. */
+        if (res == STS_OK || res == STS_ERR_HARDWARE) {
+            if (needed_retry && res == STS_OK) {
+                servo->bus->retry_saves++;
+            }
+            break;
+        }
+    }
+
+    if (res != STS_OK && res != STS_ERR_HARDWARE) {
+        servo->bus->hard_failures++;
     }
 
     return res;
