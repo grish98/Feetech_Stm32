@@ -28,7 +28,9 @@ void Telem_Record(int16_t load, uint16_t pos) {
 
 load_stats_t Telem_ComputeStats(void) {
     load_stats_t s = {0};
-    if (telem_count == 0U) return s;
+    if (telem_count == 0U) {
+        return s;
+    }
 
     s.n = telem_count;
 
@@ -37,7 +39,7 @@ load_stats_t Telem_ComputeStats(void) {
     for (uint16_t i = 0U; i < telem_count; i++) {
         int16_t v = telem_buf[i].load;
         sum += v;
-        if (abs(v) > abs(peak)) peak = v;
+        if (abs(v) > abs(peak)) { peak = v; }
     }
     s.mean = (int16_t)(sum / (int32_t)telem_count);
     s.peak = peak;
@@ -64,9 +66,9 @@ sts_result_t STS_Setup(sts_servo_t *servo) {
     }
 
     sts_result_t res = STS_SetTargetPosition(servo, TEARDOWN_TARGET_POS);
-    if (res != STS_OK) return res;
+    if (res != STS_OK) { return res; }
 
-    uint32_t start_time    = HAL_GetTick();
+    uint32_t start_time     = HAL_GetTick();
     uint8_t  target_reached = 0;
     while ((HAL_GetTick() - start_time) < 2000U) {
         if (STS_GetPresentPosition(servo, &current_pos) == STS_OK) {
@@ -87,7 +89,7 @@ sts_result_t STS_Setup(sts_servo_t *servo) {
 }
 
 sts_result_t STS_Teardown(sts_servo_t *servo) {
-    if (servo->is_online != STS_ONLINE) return STS_ERR_HARDWARE;
+    if (servo->is_online != STS_ONLINE) { return STS_ERR_HARDWARE; }
 
     SEGGER_RTT_WriteString(0, "--- Hardware Teardown ---\n");
 
@@ -98,14 +100,15 @@ sts_result_t STS_Teardown(sts_servo_t *servo) {
         uint16_t rb = 0xFFFFU;
         STS_Write16(servo, STS_REG_GOAL_TIME, 0U);
         STS_Read16(servo, STS_REG_GOAL_TIME, &rb);
-        if (rb == 0U) break;
+        if (rb == 0U) { break; }
     }
     for (uint8_t i = 0U; i < 3U; i++) {
         uint16_t rb = 0xFFFFU;
         STS_Write16(servo, STS_REG_GOAL_SPEED, 0U);
         STS_Read16(servo, STS_REG_GOAL_SPEED, &rb);
-        if (rb == 0U) break;
+        if (rb == 0U) { break; }
     }
+    STS_SetTorqueLimit(servo, STS_MAX_TORQUE);
     STS_SetTargetAcceleration(servo, ACCEL_DEFAULT);
 
     sts_result_t res = STS_SetTargetPosition(servo, TEARDOWN_TARGET_POS);
@@ -113,7 +116,7 @@ sts_result_t STS_Teardown(sts_servo_t *servo) {
         SEGGER_RTT_printf(0, "Teardown move failed (Err: %d)\n", res);
     }
 
-    uint32_t start_time    = HAL_GetTick();
+    uint32_t start_time     = HAL_GetTick();
     uint8_t  target_reached = 0;
     while ((HAL_GetTick() - start_time) < TEARDOWN_TIMEOUT_MS) {
         uint16_t current_pos;
