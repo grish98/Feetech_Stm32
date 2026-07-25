@@ -6,7 +6,6 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
@@ -31,8 +30,13 @@ set(DRIVER_SOURCES
 # STM32 Only 
 set(FIRMWARE_SOURCES
     Core/Src/main.c
-    Core/Src/stm32f4xx_it.c
-    Core/Src/system_stm32f4xx.c
+    Core/Src/stm32f1xx_it.c
+    Lib/STS_Servo/Ports/sts_ports_stm32.c
+    App/Src/app_main.c 
+    Segger_RTT/SEGGER_RTT_printf.c
+    Segger_RTT/SEGGER_RTT.c    
+    Hardware_Tests/Hw_Tests.c  
+    Hardware_Tests/Hw_utils.c    
 )
 
 # PC Only 
@@ -51,7 +55,7 @@ set(TEST_SERVO_SOURCES
 )
 
 # Detect if we are using the ARM Toolchain or Native (Windows)
-if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND CMAKE_C_COMPILER_TARGET STREQUAL "arm-none-eabi")
+if(CMAKE_C_COMPILER MATCHES "arm-none-eabi")
     set(IS_ARM_BUILD TRUE)
     enable_language(C ASM)
 else()
@@ -60,16 +64,27 @@ else()
 endif()
 
 
-
 if(IS_ARM_BUILD)
     message("Configuring for STM32 (ARM)")
+
+    list(APPEND FIRMWARE_SOURCES "startup_stm32f103xb.s")
+
     add_executable(${CMAKE_PROJECT_NAME} ${FIRMWARE_SOURCES} ${DRIVER_SOURCES})
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE STM32F103xB)
+    #target_link_options(${CMAKE_PROJECT_NAME} PRIVATE 
+    #    "-T${CMAKE_CURRENT_SOURCE_DIR}/STM32F103XX_FLASH.ld"
+    #)
+
     add_subdirectory(cmake/stm32cubemx)
     target_link_libraries(${CMAKE_PROJECT_NAME} stm32cubemx)
     target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE 
         Core/Inc
         Lib/STS_Servo/Inc  
+        Lib/STS_Servo/Ports
         App/Inc
+        Segger_RTT
+        Hardware_Tests
+
     )
 else()
     message("Configuring for Native (Windows/Host)")
@@ -83,6 +98,7 @@ else()
         Tests           
         Tests/Unity
         App/Inc
+
     )
     add_test(NAME ProtocolTests COMMAND test_protocol)
 
@@ -93,6 +109,7 @@ else()
         Tests           
         Tests/Unity
         App/Inc
+
     )
     target_compile_definitions(test_servo PRIVATE UNIT_TESTING)
     add_test(NAME ServoTests COMMAND test_servo)

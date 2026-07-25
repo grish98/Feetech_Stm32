@@ -82,7 +82,8 @@ typedef enum {
     STS_ERR_MALFORMED,        /**< Packet length byte does not match actual bytes received */
     STS_ERR_HARDWARE,         /**< Servo reported hardware fault (Address 0x41) */
     STS_ERR_TX_FAIL,          /**< Hardware-level transmission failure */
-    STS_ERR_BUSY,              /**< Interface is currently occupied */
+    STS_ERR_RX_FAIL,
+    STS_ERR_BUSY              /**< Interface is currently occupied */
 
 } sts_result_t;
 

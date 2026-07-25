@@ -1273,21 +1273,36 @@ void test_STS_SetTargetSpeed_Out_Of_Range(void) {
 }
 
 void test_STS_GetPresentSpeed_Success(void) {
-    const uint16_t expected_speed = 1500U; 
-  
-    uint8_t speed_data[STS_DATA_LEN_16BIT] = { 
-        (uint8_t)(expected_speed & 0xFFU), 
-        (uint8_t)((expected_speed >> 8U) & 0xFFU) 
-    };
-    
-    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, speed_data, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    int16_t actual_speed = 0;
+    uint8_t mock_payload[STS_DATA_LEN_16BIT];
+
+    /* Test Positive Speed (CCW / Bit 15 = 0)
+     * Raw encoder register: magnitude 1500 ticks/s (0x05DC), bit 15 = 0 (CCW).
+     * Decoded = 1500 / 2 = 750 position steps/s (encoder runs at 2x position resolution). */
+    const uint16_t raw_bus_speed_ccw = 0x05DCU;
+
+    mock_payload[0] = (uint8_t)(raw_bus_speed_ccw & 0xFFU);
+    mock_payload[1] = (uint8_t)((raw_bus_speed_ccw >> 8U) & 0xFFU);
+
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
 
-    uint16_t actual_speed = 0U;
-    sts_result_t res = STS_GetPresentSpeed(&test_servo, &actual_speed);
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentSpeed(&test_servo, &actual_speed));
+    TEST_ASSERT_EQUAL_INT16(750, actual_speed);
 
-    TEST_ASSERT_EQUAL_INT(STS_OK, res);
-    TEST_ASSERT_EQUAL_UINT16(expected_speed, actual_speed);
+    /* Test Negative Speed (CW / Bit 15 = 1)
+     * Raw encoder register: magnitude 1500 ticks/s (0x05DC), bit 15 = 1 (CW) = 0x85DC.
+     * Decoded = -(1500 / 2) = -750 position steps/s. */
+    const uint16_t raw_bus_speed_cw = 0x85DCU;
+
+    mock_payload[0] = (uint8_t)(raw_bus_speed_cw & 0xFFU);
+    mock_payload[1] = (uint8_t)((raw_bus_speed_cw >> 8U) & 0xFFU);
+
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, STS_DATA_LEN_16BIT, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentSpeed(&test_servo, &actual_speed));
+    TEST_ASSERT_EQUAL_INT16(-750, actual_speed);
 }
 
 void test_STS_SetTargetAcceleration_Success(void) {
@@ -1672,14 +1687,32 @@ void test_STS_Telemetry_Null_Guards(void) {
 }
 
 void test_STS_GetPresentLoad_Success(void) {
-    int16_t load_out = 0;
-    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES] = {TEST_MOCK_LOAD_LOW_BYTE, TEST_MOCK_LOAD_HIGH_BYTE}; 
+    int16_t actual_load = 0;
+    uint8_t mock_payload[PAYLOAD_LEN_2_BYTES];
+
+    //  Test Positive Load (CCW / Bit 10 = 1)
+    const uint16_t raw_bus_load_ccw = 0x07E8U; // Magnitude 1000 + Bit 10 Set
+    
+    mock_payload[0] = (uint8_t)(raw_bus_load_ccw & 0xFFU);
+    mock_payload[1] = (uint8_t)((raw_bus_load_ccw >> 8U) & 0xFFU);
     
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
     dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
 
-    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentLoad(&test_servo, &load_out));
-    TEST_ASSERT_EQUAL_INT16(TEST_MOCK_LOAD_VAL, load_out);
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentLoad(&test_servo, &actual_load));
+    TEST_ASSERT_EQUAL_INT16(1000, actual_load);
+
+    // Test Negative Load (CW / Bit 10 = 0)
+    const uint16_t raw_bus_load_cw = 0x03E8U; // Magnitude 1000 + Bit 10 Cleared
+    
+    mock_payload[0] = (uint8_t)(raw_bus_load_cw & 0xFFU);
+    mock_payload[1] = (uint8_t)((raw_bus_load_cw >> 8U) & 0xFFU);
+    
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, mock_payload, PAYLOAD_LEN_2_BYTES, dummy_uart_port.rx_buffer);
+    dummy_uart_port.rx_len = EXPECTED_READ16_ACK_LEN;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentLoad(&test_servo, &actual_load));
+    TEST_ASSERT_EQUAL_INT16(-1000, actual_load);
 }
 
 void test_STS_GetPresentVoltage_Success(void) {
