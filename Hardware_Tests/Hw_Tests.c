@@ -107,7 +107,7 @@ static sts_result_t Test_Pos(sts_servo_t *servo) {
     }
     for (uint8_t i = 0U; i < 3U; i++) {
         uint16_t rb = 0xFFFFU;
-    STS_Write16(servo, STS_REG_GOAL_SPEED, 0U);
+        STS_Write16(servo, STS_REG_GOAL_SPEED, 0U);
         STS_Read16(servo, STS_REG_GOAL_SPEED, &rb);
         if (rb == 0U) { break; }
     }
@@ -180,8 +180,8 @@ static sts_result_t Test_Pos(sts_servo_t *servo) {
             if (STS_GetPresentPosition(servo, &confirm_pos) == STS_OK &&
                 confirm_pos >= (TARGET_POS_TEST - POS_TOLERANCE) &&
                 confirm_pos <= (TARGET_POS_TEST + POS_TOLERANCE)) {
-            target_reached = 1;
-            break;
+                target_reached = 1;
+                break;
             }
         }
 
@@ -296,8 +296,8 @@ static sts_result_t Test_Speed(sts_servo_t *servo) {
             if (STS_GetPresentPosition(servo, &confirm_pos) == STS_OK &&
                 confirm_pos >= (TARGET_POS_TEST - POS_TOLERANCE) &&
                 confirm_pos <= (TARGET_POS_TEST + POS_TOLERANCE)) {
-            target_reached = 1;
-            break;
+                target_reached = 1;
+                break;
             }
             total_errors++;
         }
@@ -479,7 +479,7 @@ static sts_result_t Test_MovingStatus(sts_servo_t *servo) {
         uint8_t mv = 1U;
         if (STS_GetMovingStatus(servo, &mv) == STS_OK && mv == 0U) {
             moving_stopped = 1U;
-                break;
+            break;
         }
         HAL_Delay(DELAY_POLL_INTERVAL);
     }
@@ -562,4 +562,87 @@ test_end:
     }
 
     return test_report.tests_failed;
+}
+
+void STS_RunStressTest(sts_servo_t *servo, uint32_t iterations) {
+    uint32_t run_pass_clean         = 0U;
+    uint32_t run_pass_skip          = 0U;
+    uint32_t run_fail               = 0U;
+    uint32_t total_skips            = 0U;
+    uint32_t total_quiescence_waits = 0U;
+    uint16_t fail_counts[36U]       = {0U};
+
+    /* Bus counters never reset; capture baseline so the summary shows deltas
+     * for this stress run only, even if the bus was used before. */
+    uint32_t base_tx   = servo->bus->total_transactions;
+    uint32_t base_ret  = servo->bus->total_retries;
+    uint32_t base_save = servo->bus->retry_saves;
+    uint32_t base_hard = servo->bus->hard_failures;
+
+    for (uint32_t i = 0U; i < iterations; i++) {
+        SEGGER_RTT_printf(0, "\n>>> STRESS RUN %lu / %lu <<<\n", i + 1UL, iterations);
+
+        STS_RunIntegrationTests(servo);
+
+        total_skips            += test_report.tests_skipped;
+        total_quiescence_waits += test_report.quiescence_waits;
+
+        if (test_report.tests_failed == 0U) {
+            if (test_report.tests_skipped > 0U) {
+                run_pass_skip++;
+            } else {
+                run_pass_clean++;
+            }
+        } else {
+            run_fail++;
+            uint8_t fid = test_report.last_failed_test_id;
+            if (fid >= 1U && fid <= 35U) {
+                fail_counts[fid]++;
+            }
+        }
+
+        HAL_Delay(500U);
+    }
+
+    uint32_t total_tx   = servo->bus->total_transactions - base_tx;
+    uint32_t total_ret  = servo->bus->total_retries      - base_ret;
+    uint32_t total_save = servo->bus->retry_saves        - base_save;
+    uint32_t total_hard = servo->bus->hard_failures      - base_hard;
+
+    uint32_t total_pass = run_pass_clean + run_pass_skip;
+
+    SEGGER_RTT_printf(0, "\n======= STRESS TEST SUMMARY (%lu runs) =======\n", iterations);
+    SEGGER_RTT_printf(0, "Pass (clean):      %lu\n", run_pass_clean);
+    SEGGER_RTT_printf(0, "Pass (skipped):    %lu  (%lu skipped tests total)\n", run_pass_skip, total_skips);
+    SEGGER_RTT_printf(0, "Fail:              %lu\n", run_fail);
+    SEGGER_RTT_printf(0, "Quiescence waits:  %lu  (gate was load-bearing this many times)\n",
+                      total_quiescence_waits);
+    SEGGER_RTT_printf(0, "Pass rate:     %lu%%  (%lu / %lu)\n",
+                      (total_pass * 100UL) / iterations, total_pass, iterations);
+
+    SEGGER_RTT_printf(0, "--- UART bus counters ---\n");
+    SEGGER_RTT_printf(0, "Transactions:  %lu\n", total_tx);
+    if (total_ret > 0U) {
+        SEGGER_RTT_printf(0, "Retries:       %lu  (1 per %lu tx)\n",
+                          total_ret, total_tx / total_ret);
+        SEGGER_RTT_printf(0, "Retry saves:   %lu  (%lu%%)\n",
+                          total_save, (total_save * 100UL) / total_ret);
+    } else {
+        SEGGER_RTT_printf(0, "Retries:       0\n");
+        SEGGER_RTT_printf(0, "Retry saves:   0\n");
+    }
+    SEGGER_RTT_printf(0, "Hard failures: %lu\n", total_hard);
+
+    SEGGER_RTT_printf(0, "--- Test failures ---\n");
+    uint8_t any = 0U;
+    for (uint8_t t = 1U; t <= 35U; t++) {
+        if (fail_counts[t] > 0U) {
+            SEGGER_RTT_printf(0, "  Test %2d: %u\n", (int)t, (unsigned int)fail_counts[t]);
+            any = 1U;
+        }
+    }
+    if (any == 0U) {
+        SEGGER_RTT_printf(0, "  (none)\n");
+    }
+    SEGGER_RTT_printf(0, "==============================================\n");
 }
