@@ -13,7 +13,9 @@ Debug/
 Release/
 bin/
 obj/
-docs/
+
+# Doxygen output only; docs/*.md is tracked
+docs/html/
 
 
 # CMake & Ninja Artifacts
