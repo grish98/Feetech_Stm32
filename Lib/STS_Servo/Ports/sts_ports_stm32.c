@@ -12,15 +12,15 @@
  * is no longer needed. */
 // #define STS_DEBUG_MARKER
 
-// #ifdef STS_DEBUG_MARKER
-// #define STS_MARKER_PORT GPIOA
-// #define STS_MARKER_PIN  GPIO_PIN_0
-// #define STS_MARKER_HIGH() HAL_GPIO_WritePin(STS_MARKER_PORT, STS_MARKER_PIN, GPIO_PIN_SET)
-// #define STS_MARKER_LOW()  HAL_GPIO_WritePin(STS_MARKER_PORT, STS_MARKER_PIN, GPIO_PIN_RESET)
-// #else
-// #define STS_MARKER_HIGH()
-// #define STS_MARKER_LOW()
-// #endif
+#ifdef STS_DEBUG_MARKER
+#define STS_MARKER_PORT GPIOA
+#define STS_MARKER_PIN  GPIO_PIN_0
+#define STS_MARKER_HIGH() HAL_GPIO_WritePin(STS_MARKER_PORT, STS_MARKER_PIN, GPIO_PIN_SET)
+#define STS_MARKER_LOW()  HAL_GPIO_WritePin(STS_MARKER_PORT, STS_MARKER_PIN, GPIO_PIN_RESET)
+#else
+#define STS_MARKER_HIGH()
+#define STS_MARKER_LOW()
+#endif
 
 static UART_HandleTypeDef  *s_huart      = NULL;
 static volatile uint8_t     s_tx_done    = 0U;
