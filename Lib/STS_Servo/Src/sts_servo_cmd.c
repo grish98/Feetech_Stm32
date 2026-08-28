@@ -10,7 +10,7 @@
  * register access primitives.
  *
  * All commands are stateless and route through the service layer command
- * engine — no direct protocol framing occurs at this level.
+ * engine  no direct protocol framing occurs at this level.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.

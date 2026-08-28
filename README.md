@@ -1,30 +1,32 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C driver for **Feetech STS series smart servos** over half-duplex UART, with a complete STM32F103 hardware port. Implements the full STS binary packet protocol with noise-resilient parsing, strict error reporting, and zero dynamic memory allocation — validated on physical hardware across 240,000+ live transactions.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI, and the hardware port has completed 390,385 live transactions with zero hard failures.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
+
+**Quick links:** [API documentation](https://grish98.github.io/Feetech_Stm32/) | [Hardware validation](docs/hardware-validation.md) | [Design decisions](docs/design-decisions.md) | [Porting guide](docs/porting.md) | [Engineering postmortem](https://github.com/grish98/Feetech_Stm32/issues/8)
 
 ---
 
 ## Status
 
-- **Protocol and service layers**: complete; **198 host unit tests** passing (Unity via CTest), gated in CI.
-- **STM32F103 port**: DMA + IDLE-line half-duplex, validated on hardware. A 200-run integration campaign completed **152,980 transactions with 0 retries and 0 hard failures**; cumulative validation across three campaigns totals **240,050 transactions with 0 failures**.
-- **In progress**: port simplification (external pull-up + AF open-drain, removing per-packet GPIO switching) and full-duplex adapter re-validation. Tracked in the issue tracker.
+- **Protocol and service core**: implemented and covered by **198 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass.
+- **STM32F103 port**: validated across four on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
+- **In progress**: port simplification (external pull-up and AF open-drain, removing per-packet GPIO switching) and full-duplex adapter re-validation. Tracked in the issue tracker.
 
-A worked root-cause investigation — an intermittent test failure traced to test-fixture state coupling rather than the initially suspected bus EMI — is documented as an engineering postmortem in **[issue #8](https://github.com/grish98/Feetech_Stm32/issues/8)**, with the supporting campaign logs attached. The full hardware bring-up was merged in **[PR #11](https://github.com/grish98/Feetech_Stm32/pull/11)**.
+An intermittent test failure was traced to state persisting between test runs rather than the initially suspected bus EMI. The investigation and supporting campaign logs are documented as an engineering postmortem in **[issue #8](https://github.com/grish98/Feetech_Stm32/issues/8)**. The full hardware bring-up was merged in **[PR #11](https://github.com/grish98/Feetech_Stm32/pull/11)**.
 
 ---
 
 ## Features
 
-- **Noise-resilient parsing**: a sliding-window seeker recovers from bus collisions, false headers, and partial packet fragments
-- **Zero heap allocation**: all buffers are caller-provided; safe for deterministic real-time and RTOS environments
-- **HAL-agnostic core**: injected function pointers decouple servo logic from the MCU UART implementation
-- **Instrumented bus** :per-transaction counters (transactions, retries, retry-saves, hard failures) enable measured reliability bounds rather than assumed reliability
-- **Precise error reporting**: a distinct error code for every failure mode
+- **Noise-resilient parsing**: a sliding-window parser resynchronises after malformed data, false headers, and partial packet fragments
+- **Zero heap allocation**: all API buffers are caller-provided, making memory ownership explicit and keeping the core usable on targets without a heap
+- **HAL-agnostic core**: three injected function pointers decouple servo logic from the MCU UART implementation
+- **Instrumented bus**: per-transaction counters for transactions, retries, retry-saves, and hard failures support regression testing, hardware validation, and fault analysis
+- **Granular error reporting**: separate result codes distinguish validation, protocol, transport, timeout, and device faults
 - **Portable**: written in C11 with fixed-width types; no platform-specific dependencies in the core
-- **Full command set**: position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID control
+- **Broad command coverage**: position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID control
 - **198 host unit tests** (Unity/CTest), plus an on-target hardware integration and stress suite
 
 ---
@@ -33,15 +35,145 @@ A worked root-cause investigation — an intermittent test failure traced to tes
 
 Three layers, each independently testable:
 
-**Protocol layer** (`sts_protocol`): stateless packet framing, checksum, and response parsing. Holds no knowledge of hardware or servo state. Each call is independent, so it is safe to use for multiple servos without synchronisation.
+**Protocol layer** (`sts_protocol`): stateless packet framing, checksum, and response parsing. It holds no knowledge of hardware or servo state, and each parse call has no shared parser state. Synchronisation of shared bus access remains the responsibility of the service or application layer.
 
-**Service layer** (`sts_servo`, `sts_servo_cmd`): HAL-agnostic servo management built on the protocol layer. Handles bus wiring, servo handles, and all transactions through a single command engine (`sts_execute_command`), which also carries the transaction/retry/failure counters. Platform UART is injected as function pointers via `sts_bus_t`, so the core has no MCU dependency. The command set (`sts_servo_cmd`) provides motion control, telemetry reads, and configuration built on the register-access primitives.
+**Service layer** (`sts_servo`, `sts_servo_cmd`): HAL-agnostic servo management built on the protocol layer. Handles bus wiring, servo handles, and all transactions through a single command engine (`sts_execute_command`), which also carries the transaction, retry, and failure counters. Platform UART is injected as function pointers via `sts_bus_t`, so the core has no MCU dependency. The command set (`sts_servo_cmd`) provides motion control, telemetry reads, and configuration built on the register-access primitives.
 
-**Port layer** (`Ports/sts_ports_stm32.c`): the STM32F103 implementation of the injected transmit/receive/flush contract: DMA transfers with IDLE-line variable-length reception, direct-wired half-duplex turnaround, and bounded error recovery. Replacing this one file (plus the `STS_Delay_ms` / `STS_GetTick_ms` timing hooks) ports the driver to a different MCU.
+**Port layer** (`Ports/sts_ports_stm32.c`): the STM32F103 implementation of the injected transmit, receive, and flush contract: DMA transfers with IDLE-line variable-length reception, direct-wired half-duplex turnaround, and bounded error recovery. Implementing the transport callbacks ports the core to another MCU, with this file as a worked reference; see the [porting guide](docs/porting.md).
 
 ---
 
-## Protocol Overview
+## Hardware Validation
+
+The STM32F103 port is exercised by an on-target integration suite (`Hardware_Tests/`) over SEGGER RTT, covering protocol validation, position, speed and acceleration control, the torque state machine, and moving-status semantics. An instrumented stress runner drives repeated campaigns and reports pass, skip and fail counts, a per-test failure histogram, quiescence-gate activation, and bus-counter deltas.
+
+| Campaign | Runs | Transactions | Retries | Hard failures |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline | 100 | 67,801 | 0 | 0 |
+| Intermediate | 30 | 19,269 | 0 | 0 |
+| Final | 200 | 152,980 | 0 | 0 |
+| Flush removal | 200 | 150,335 | 0 | 0 |
+| **Total** | **530** | **390,385** | **0** | **0** |
+
+These figures characterise one bench configuration: a single MCU, servo, cable, and environment. They are direct observations, not a general reliability claim for the design. Methodology, per-campaign conditions, and the oscilloscope work that retracted an earlier transient hypothesis are documented in **[docs/hardware-validation.md](docs/hardware-validation.md)**.
+
+---
+
+## Selected Design Decisions
+
+**Why are hardware errors on ping treated as online?**
+`STS_ERR_HARDWARE` means the servo responded, so communication succeeded. The fault lies in the servo's internal state, such as overtemperature or overload, rather than the bus. Marking the servo offline in this case would be incorrect. Hardware error semantics belong in a higher application layer that has the context to make recovery decisions.
+
+**Why a centralised command engine?**
+All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, gives retry policy and the transaction counters a single home, and provides one point of change for future work such as mutex protection or asynchronous IO.
+
+**Why caller-provided buffers?**
+Dynamic allocation can introduce variable latency, fragmentation, and runtime allocation failures. Caller-provided API buffers make memory ownership and capacity explicit while keeping the core usable on targets without a heap.
+
+The full set, including the operating-mode and direction-encoding semantics, is in **[docs/design-decisions.md](docs/design-decisions.md)**.
+
+---
+
+## Usage Example
+
+The example below shows the injection contract with a minimal blocking transport. The production STM32 port in `Ports/sts_ports_stm32.c` implements the same contract over DMA with IDLE-line half-duplex reception. Full API documentation is published at **[grish98.github.io/Feetech_Stm32](https://grish98.github.io/Feetech_Stm32/)**.
+
+```c
+#include "sts_servo.h"
+#include "sts_servo_cmd.h"
+
+/* 1. Implement your platform transport functions */
+sts_result_t my_uart_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
+    UART_HandleTypeDef *huart = (UART_HandleTypeDef *)bus->port_handle;
+    return (HAL_UART_Transmit(huart, data, len, 10) == HAL_OK)
+           ? STS_OK : STS_ERR_TX_FAIL;
+}
+
+/* Distinguish a silent bus from a transport fault; both are retryable, but only
+   the caller can tell them apart afterwards. */
+sts_result_t my_uart_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
+    UART_HandleTypeDef *huart = (UART_HandleTypeDef *)bus->port_handle;
+    switch (HAL_UART_Receive(huart, data, len, timeout_ms)) {
+        case HAL_OK:      return STS_OK;
+        case HAL_TIMEOUT: return STS_ERR_TIMEOUT;
+        default:          return STS_ERR_RX_FAIL;
+    }
+}
+
+/* 2. Initialise the bus and servo handles */
+sts_bus_t   bus;
+sts_servo_t servo;
+
+STS_Bus_Init(&bus, &huart2, my_uart_tx, my_uart_rx);
+bus.flush_rx    = NULL;  /* optional: supply one to drain stale RX between retries */
+bus.max_retries = 2U;    /* 0 = single attempt */
+
+STS_Servo_Init(&servo, &bus, 0x01);
+
+/* 3. Ping to confirm the servo is online */
+if (STS_servo_ping(&servo) == STS_OK) {
+    /* servo.is_online == STS_ONLINE */
+}
+
+/* 4. Drive the servo. Every call returns a result code; a short chain keeps the
+      first failure rather than overwriting it. */
+sts_result_t res = STS_SetOperatingMode(&servo, STS_MODE_POSITION);
+if (res == STS_OK) { res = STS_SetTorqueEnable(&servo, 1); }
+if (res == STS_OK) { res = STS_SetTargetAcceleration(&servo, 50); }
+if (res == STS_OK) { res = STS_SetTargetPosition(&servo, 2048); }
+
+if (res == STS_ERR_TIMEOUT) {
+    /* Nothing answered: check wiring, servo ID, and baud rate. */
+} else if (res == STS_ERR_HARDWARE) {
+    /* The servo replied but reports a fault, such as overload or overtemperature.
+       Communication is intact, so this is a servo-state problem, not a bus problem. */
+}
+
+/* 5. Read telemetry */
+uint16_t pos  = 0U;
+uint8_t  temp = 0U;
+STS_GetPresentPosition(&servo, &pos);
+STS_GetPresentTemperature(&servo, &temp);
+
+/* 6. Read the bus counters at any time */
+uint32_t failures = bus.hard_failures;
+```
+
+---
+
+## Building and Testing
+
+The library uses CMake with a dual-target build system. Host tests run on the development machine with a native compiler, so no hardware is required. The ARM firmware target is selected automatically when an `arm-none-eabi` toolchain is configured.
+
+### Prerequisites
+
+- CMake 3.22+
+- A C11 compiler (GCC or Clang)
+- CTest (included with CMake)
+
+### Build and run tests
+
+```bash
+cmake -B build_native
+cmake --build build_native --config Debug
+ctest --test-dir build_native -C Debug --output-on-failure
+```
+
+All 198 tests should pass across two suites: 40 in the protocol layer and 158 in the service and command layers. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
+
+### Build the API documentation
+
+Requires [Doxygen](https://www.doxygen.nl/). CI publishes the same output to GitHub Pages on every push to `main`.
+
+```bash
+cmake --build build_native --target docs
+```
+
+Generated HTML is written to `build_native/html/index.html`.
+
+---
+
+## Protocol Summary
 
 The Feetech STS protocol is a binary half-duplex UART protocol. Every packet follows this structure:
 
@@ -54,582 +186,26 @@ The Feetech STS protocol is a binary half-duplex UART protocol. Every packet fol
 | 5..N    | Parameters  | Optional payload (0–253 bytes)                 |
 | N+1     | Checksum    | `~(ID + Length + Instruction + Params) & 0xFF` |
 
----
-
-## Operating Modes
-
-The STS servo supports four operating modes, set via `STS_SetOperatingMode`. The active mode determines how target commands are interpreted.
-
-| Mode                | Description |
-|---------------------|-------------|
-| `STS_MODE_POSITION` | Moves the servo to an absolute position within `[0, STS_MAX_POSITION]`. The servo holds position under load. This is the default mode for most applications. |
-| `STS_MODE_SPEED`    | Drives the servo continuously at a target speed within `[0, STS_MAX_SPEED]`. Useful for wheel-drive or conveyor applications. |
-| `STS_MODE_PWM`      | Applies a raw PWM duty cycle to the motor within `[0, STS_MAX_PWM]`. No closed-loop control is active. Use when direct motor voltage control is required. |
-| `STS_MODE_STEP`     | Commands a relative step count within `[0, STS_MAX_STEP]`. Useful for incremental motion without tracking absolute position. |
-
-Direction for speed, PWM, and step modes is supplied explicitly through the `dir` argument of the individual command functions. When using the universal `STS_SetTarget` dispatcher, the **sign** of the `target` argument encodes direction for those three modes; position mode ignores the sign and clamps negative values to zero.
-
----
-
-## API Reference
-
-Full Doxygen-generated documentation can be built locally (see [Building Docs](#building-docs)).
-
-### Protocol Layer
-
-#### `sts_calculate_checksum`
-
-```c
-sts_result_t sts_calculate_checksum(
-    const uint8_t* pkt_buf,
-    uint16_t       pkt_len,
-    uint8_t*       checksum_out
-);
-```
-
-Calculates the 8-bit NOT-sum checksum over a packet buffer. Skips the two sync headers and the final checksum byte.
-
----
-
-#### `sts_create_packet`
-
-```c
-sts_result_t sts_create_packet(
-    uint8_t        id,
-    uint8_t        instruction,
-    const uint8_t* param_buf,
-    uint16_t       param_len,
-    uint8_t*       pkt_buf,
-    uint16_t       pkt_buf_size
-);
-```
-
-Serialises a complete STS command packet into `pkt_buf`. Validates ID, instruction, parameter length, and buffer capacity before writing.
-
----
-
-#### `sts_parse_response`
-
-```c
-sts_result_t sts_parse_response(
-    uint8_t        expected_id,
-    const uint8_t* rx_buf,
-    uint16_t       rx_len,
-    uint8_t*       param_buf,
-    uint16_t       param_buf_size,
-    uint16_t*      param_len
-);
-```
-
-Scans a raw UART buffer for a valid response packet matching `expected_id`. Skips noise and false headers automatically. On success, extracted parameters are written to `param_buf`.
-
----
-
-### Service Layer
-
-#### `STS_Bus_Init`
-
-```c
-sts_result_t STS_Bus_Init(
-    sts_bus_t*         bus,
-    void*              port_handle,
-    sts_hal_transmit_t tx_func,
-    sts_hal_receive_t  rx_func
-);
-```
-
-Initialises a shared bus handle by injecting platform-specific transmit and receive function pointers. `port_handle` is an opaque pointer passed through to the HAL functions — pass `NULL` if your transport does not require one.
-
----
-
-#### `STS_Servo_Init`
-
-```c
-sts_result_t STS_Servo_Init(
-    sts_servo_t* servo,
-    sts_bus_t*   bus,
-    uint8_t      id
-);
-```
-
-Binds a servo handle to a bus and assigns it a hardware ID. Sets `is_online` to `STS_OFFLINE`. ID must be in the range 0–253.
-
----
-
-#### `STS_servo_ping`
-
-```c
-sts_result_t STS_servo_ping(sts_servo_t* servo);
-```
-
-Sends a PING instruction and updates `servo->is_online`. Sets `STS_ONLINE` on `STS_OK` or `STS_ERR_HARDWARE` — a hardware fault means the servo responded, so comms are intact. Sets `STS_OFFLINE` on any communication failure. Broadcast IDs are rejected.
-
----
-
-#### `STS_Write8` / `STS_Write16`
-
-```c
-sts_result_t STS_Write8 (sts_servo_t* servo, uint8_t reg_addr, uint8_t  value);
-sts_result_t STS_Write16(sts_servo_t* servo, uint8_t reg_addr, uint16_t value);
-```
-
-Writes an 8-bit or 16-bit value to a servo register. 16-bit values are transmitted little-endian.
-
----
-
-#### `STS_Read8` / `STS_Read16`
-
-```c
-sts_result_t STS_Read8 (sts_servo_t* servo, uint8_t reg_addr, uint8_t*  value_out);
-sts_result_t STS_Read16(sts_servo_t* servo, uint8_t reg_addr, uint16_t* value_out);
-```
-
-Reads an 8-bit or 16-bit value from a servo register. Broadcast IDs are rejected — reads require a response from a single target.
-
----
-
-### Service Layer — Commands
-
-#### Motion Control
-
-##### `STS_SetTorqueEnable`
-
-```c
-sts_result_t STS_SetTorqueEnable(sts_servo_t* servo, uint8_t enable);
-```
-
-Enables or disables servo torque. Any non-zero value enables torque; `0` disables it.
-
----
-
-##### `STS_SetOperatingMode`
-
-```c
-sts_result_t STS_SetOperatingMode(sts_servo_t* servo, sts_operating_mode_t mode);
-```
-
-Sets the servo operating mode. Valid modes are `STS_MODE_POSITION`, `STS_MODE_SPEED`, `STS_MODE_PWM`, and `STS_MODE_STEP`. The `servo->current_mode` field is used by `STS_SetTarget` to route commands correctly.
-
----
-
-##### `STS_SetTargetPosition`
-
-```c
-sts_result_t STS_SetTargetPosition(sts_servo_t* servo, uint16_t position);
-```
-
-Writes the goal position register. `position` must be within `[0, STS_MAX_POSITION]`.
-
----
-
-##### `STS_GetPresentPosition`
-
-```c
-sts_result_t STS_GetPresentPosition(sts_servo_t* servo, uint16_t* position_out);
-```
-
-Reads the present position register.
-
----
-
-##### `STS_SetTargetSpeed`
-
-```c
-sts_result_t STS_SetTargetSpeed(sts_servo_t* servo, uint16_t speed, sts_direction_t dir);
-```
-
-Writes the goal speed register with direction. `speed` must be within `[0, STS_MAX_SPEED]`. Direction is encoded into the register's direction bit.
-
----
-
-##### `STS_GetPresentSpeed`
-
-```c
-sts_result_t STS_GetPresentSpeed(sts_servo_t* servo, uint16_t* speed_out);
-```
-
-Reads the present speed register.
-
----
-
-##### `STS_SetTargetAcceleration`
-
-```c
-sts_result_t STS_SetTargetAcceleration(sts_servo_t* servo, uint8_t acceleration);
-```
-
-Writes the acceleration register. `acceleration` must be within `[0, STS_MAX_ACCELERATION]`.
-
----
-
-##### `STS_SetTargetPWM`
-
-```c
-sts_result_t STS_SetTargetPWM(sts_servo_t* servo, uint16_t pwm, sts_direction_t dir);
-```
-
-Writes the goal speed register as a raw PWM value with direction. Used in `STS_MODE_PWM`. `pwm` must be within `[0, STS_MAX_PWM]`.
-
----
-
-##### `STS_SetTargetStep`
-
-```c
-sts_result_t STS_SetTargetStep(sts_servo_t* servo, uint16_t steps, sts_direction_t dir);
-```
-
-Writes the goal position register as a step count with direction. Used in `STS_MODE_STEP`. `steps` must be within `[0, STS_MAX_STEP]`.
-
----
-
-##### `STS_SetTarget`
-
-```c
-sts_result_t STS_SetTarget(sts_servo_t* servo, int32_t target);
-```
-
-Universal target dispatcher. Routes to the appropriate command based on `servo->current_mode`:
-
-- `STS_MODE_POSITION`: calls `STS_SetTargetPosition`; negative values are clamped to 0
-- `STS_MODE_SPEED`: calls `STS_SetTargetSpeed`; sign determines direction
-- `STS_MODE_PWM`: calls `STS_SetTargetPWM`; sign determines direction
-- `STS_MODE_STEP`: calls `STS_SetTargetStep`; sign determines direction
-
----
-
-##### `STS_SetTorqueLimit`
-
-```c
-sts_result_t STS_SetTorqueLimit(sts_servo_t* servo, uint16_t limit);
-```
-
-Writes the torque limit register. `limit` must be within `[0, STS_MAX_TORQUE]`.
-
----
-
-#### Telemetry
-
-##### `STS_GetPresentLoad`
-
-```c
-sts_result_t STS_GetPresentLoad(sts_servo_t* servo, int16_t* load_out);
-```
-
-Reads the present load register as a signed 16-bit value.
-
----
-
-##### `STS_GetPresentVoltage`
-
-```c
-sts_result_t STS_GetPresentVoltage(sts_servo_t* servo, uint8_t* voltage_out);
-```
-
-Reads the present voltage register.
-
----
-
-##### `STS_GetPresentTemperature`
-
-```c
-sts_result_t STS_GetPresentTemperature(sts_servo_t* servo, uint8_t* temp_out);
-```
-
-Reads the present temperature register.
-
----
-
-##### `STS_GetMovingStatus`
-
-```c
-sts_result_t STS_GetMovingStatus(sts_servo_t* servo, uint8_t* status_out);
-```
-
-Reads the moving flag register.
-
----
-
-#### Configuration
-
-##### `STS_SetEEPROMLock`
-
-```c
-sts_result_t STS_SetEEPROMLock(sts_servo_t* servo, uint8_t lock);
-```
-
-Locks or unlocks the EEPROM. Pass `EEPROM_LOCK` or `EEPROM_UNLOCK`. EEPROM must be unlocked before writing persistent configuration registers such as ID.
-
----
-
-##### `STS_SetID`
-
-```c
-sts_result_t STS_SetID(sts_servo_t* servo, uint8_t new_id);
-```
-
-Writes a new ID to the servo's EEPROM ID register. `new_id` must be in the range `[0, STS_ID_BROADCAST_SYNC]`. The EEPROM must be unlocked with `STS_SetEEPROMLock` before calling this, and locked again immediately after to prevent flash wear.
-
----
-
-### Error Codes
-
-| Code                    | Meaning                                              |
-|-------------------------|------------------------------------------------------|
-| `STS_OK`                | Operation successful                                 |
-| `STS_ERR_NULL_PTR`      | A required pointer argument was NULL                 |
-| `STS_ERR_INVALID_LEN`   | Length value outside protocol limits                 |
-| `STS_ERR_INVALID_PARAM` | Invalid ID, instruction, or out-of-range value       |
-| `STS_ERR_BUF_TOO_SMALL` | Provided buffer cannot hold the packet or parameters |
-| `STS_ERR_HEADER`        | Packet does not begin with `0xFF 0xFF`               |
-| `STS_ERR_ID_MISMATCH`   | Response ID does not match expected ID               |
-| `STS_ERR_CHECKSUM`      | Calculated checksum does not match received byte     |
-| `STS_ERR_MALFORMED`     | Length field inconsistent with actual bytes received |
-| `STS_ERR_HARDWARE`      | Servo reported a hardware fault in the status byte   |
-| `STS_ERR_TIMEOUT`       | Servo did not respond within the deadline            |
-| `STS_ERR_TX_FAIL`       | Hardware-level transmission failure                  |
-| `STS_ERR_BUSY`          | Interface is currently occupied                      |
-
----
-
-## Usage Example
-
-### Protocol Layer (direct packet control)
-
-```c
-#include "sts_protocol.h"
-
-/* Build a Ping command for servo ID 1 */
-uint8_t tx_buf[STS_MIN_PACKET_SIZE];
-
-sts_result_t res = sts_create_packet(
-    0x01,           /* Servo ID      */
-    0x01,           /* Ping command  */
-    NULL, 0,        /* No parameters */
-    tx_buf, sizeof(tx_buf)
-);
-
-if (res != STS_OK) { /* Handle error */ }
-
-/* Transmit tx_buf over UART (platform-specific) */
-
-uint8_t rx_buf[32];
-uint8_t params[16];
-uint16_t params_len = 0;
-
-res = sts_parse_response(
-    0x01,
-    rx_buf, bytes_received,
-    params, sizeof(params),
-    &params_len
-);
-```
-
-### Service Layer (HAL-injected servo control)
-
-The example below shows the injection contract with a minimal blocking transport.
-The production STM32 port in `Ports/sts_ports_stm32.c` implements the same contract
-over DMA with IDLE-line half-duplex reception — refer to that file for the on-target
-transport.
-
-```c
-#include "sts_servo.h"
-
-/* 1. Implement your platform HAL functions */
-sts_result_t my_uart_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
-    UART_HandleTypeDef *huart = (UART_HandleTypeDef *)bus->port_handle;
-    return (HAL_UART_Transmit(huart, data, len, 10) == HAL_OK)
-           ? STS_OK : STS_ERR_TX_FAIL;
-}
-
-sts_result_t my_uart_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
-    UART_HandleTypeDef *huart = (UART_HandleTypeDef *)bus->port_handle;
-    return (HAL_UART_Receive(huart, data, len, timeout_ms) == HAL_OK)
-           ? STS_OK : STS_ERR_TIMEOUT;
-}
-
-/* 2. Initialise the bus and servo handles */
-sts_bus_t   bus;
-sts_servo_t servo;
-
-STS_Bus_Init(&bus, &huart1, my_uart_tx, my_uart_rx);
-STS_Servo_Init(&servo, &bus, 0x01);
-
-/* 3. Ping to confirm the servo is online */
-if (STS_servo_ping(&servo) == STS_OK) {
-    /* servo.is_online == STS_ONLINE */
-}
-
-/* 4. Read and write registers directly */
-uint16_t position = 0;
-STS_Read16(&servo, STS_REG_PRESENT_POSITION, &position);
-STS_Write16(&servo, STS_REG_GOAL_POSITION, 2048);
-```
-
-### High-Level Commands
-
-```c
-#include "sts_servo_cmd.h"
-
-/* Set position mode and drive to centre */
-STS_SetOperatingMode(&servo, STS_MODE_POSITION);
-STS_SetTorqueEnable(&servo, 1);
-STS_SetTargetAcceleration(&servo, 50);
-STS_SetTargetPosition(&servo, 2048);
-
-/* Poll until the servo stops moving */
-uint8_t moving = 1;
-while (moving) {
-    STS_GetMovingStatus(&servo, &moving);
-}
-
-/* Read back telemetry */
-uint16_t pos;
-uint8_t  temp, voltage;
-int16_t  load;
-
-STS_GetPresentPosition(&servo, &pos);
-STS_GetPresentTemperature(&servo, &temp);
-STS_GetPresentVoltage(&servo, &voltage);
-STS_GetPresentLoad(&servo, &load);
-
-/* Universal dispatcher: sign encodes direction in speed/PWM/step modes */
-STS_SetOperatingMode(&servo, STS_MODE_SPEED);
-STS_SetTarget(&servo,  500);   /* CCW at speed 500 */
-STS_SetTarget(&servo, -500);   /* CW  at speed 500 */
-
-/* Persist a new ID (unlock EEPROM first, lock immediately after) */
-STS_SetEEPROMLock(&servo, EEPROM_UNLOCK);
-STS_SetID(&servo, 0x02);
-STS_SetEEPROMLock(&servo, EEPROM_LOCK);
-```
-
----
-
-## Hardware Validation
-
-The STM32F103 port is exercised by an on-target integration suite (`Hardware_Tests/`) over SEGGER RTT, covering protocol validation, position/speed/acceleration control, the torque state machine, and moving-status semantics. An instrumented stress runner drives repeated campaigns and reports pass/skip/fail counts, a per-test failure histogram, quiescence-gate activation, and bus-counter deltas per campaign.
-
-Final validation campaign: **200/200 runs, 0 skips, 152,980 transactions, 0 retries, 0 hard failures** — bounding the raw per-transaction error rate below **1.25×10⁻⁵** (rule of three, 95% one-sided). Cumulative across three campaigns: **240,050 transactions, 0 failures**.
-
-The campaign logs, and a full engineering postmortem of an intermittent failure (root-caused to test-fixture state coupling, not the initially suspected bus EMI), are recorded in **[issue #8](https://github.com/grish98/Feetech_Stm32/issues/8)**. The full validation environment was merged in **[PR #11](https://github.com/grish98/Feetech_Stm32/pull/11)**.
-
----
-
-## Building and Testing
-
-The library uses CMake with a dual-target build system. Host tests run on the development machine with a native compiler — no hardware required.
-
-### Prerequisites
-
-- CMake 3.15+
-- A C11 compiler (GCC or Clang)
-- CTest (included with CMake)
-
-### Build and run tests
-
-```bash
-cmake -B build_native
-cmake --build build_native
-cd build_native && ctest --output-on-failure
-```
-
-### Expected output
-
-```c
-    Start 1: ProtocolTests
-1: ========== STS Protocol Layer Unit Tests ==========
-1: 40 Tests 0 Failures 0 Ignored — OK
-
-    Start 2: ServoTests
-2: ========== STS Service Layer Unit Tests ==========
-2: 158 Tests 0 Failures 0 Ignored — OK
-
-100% tests passed, 0 tests failed out of 2
-```
-
-(198 host unit tests total: 40 protocol layer, 158 service and command layer.)
-
----
-
-## Building Docs
-
-Requires [Doxygen](https://www.doxygen.nl/).
-
-```bash
-cmake --build build_native --target docs
-```
-
-Generated HTML documentation is written to `build_native/docs/html/index.html`.
-
----
-
-## Project Structure
-
-```c
-Feetech_Stm32/
-├── Lib/STS_Servo/
-│   ├── Inc/                    # Protocol, service, command, register, and type headers
-│   ├── Src/                    # Protocol, service, and command implementations
-│   └── Ports/
-│       ├── sts_ports_stm32.c   # STM32F103 half-duplex port (DMA + IDLE line)
-│       └── sts_ports_stm32.h
-├── Hardware_Tests/             # On-target integration + stress suite (SEGGER RTT)
-│   ├── Hw_Tests.{c,h}          # Integration tests + instrumented stress runner
-│   └── Hw_utils.{c,h}          # Setup, teardown, telemetry helpers
-├── Tests/                      # Host unit tests (Unity/CTest)
-│   ├── Unity/                  # Unity framework
-│   ├── test_sts_protocol.{c,h} # Protocol layer tests
-│   ├── test_sts_servo.{c,h}    # Service + command layer tests
-│   ├── test_sts_utils.{c,h}    # Response simulation helpers
-│   └── test_runner_*.c         # CTest entry points
-├── App/                        # Application entry point, boot-time servo ID scan
-├── Core/  Drivers/             # STM32 HAL and CubeMX-generated files
-├── Segger_RTT/                 # RTT transport for on-target logging
-├── .github/workflows/ci.yml    # CI pipeline
-└── CMakeLists.txt
-```
-
----
-
-## Design Notes
-
-**Why no heap allocation?**
-Dynamic memory allocation introduces non-deterministic behaviour that is unsafe in real-time control systems. All buffers are caller-provided, making memory ownership explicit.
-
-**Why stateless parsing?**
-The parser holds no internal state between calls. Each call to `sts_parse_response` is independent, making it safe to use for multiple servos simultaneously without synchronisation.
-
-**Why does `sts_create_packet` reject instruction `0x00`?**
-`0x00` is not a valid STS instruction byte. The status byte in servo responses uses `0x00` to indicate no hardware error — it has a different semantic role than a command instruction. Response packet construction for testing is handled by the `simulate_servo_response` helper in `test_sts_utils.c`.
-
-**Why are hardware errors on ping treated as online?**
-`STS_ERR_HARDWARE` means the servo responded — communication succeeded. The fault lies in the servo's internal state (overtemperature, overload, etc.), not the bus. Marking the servo offline in this case would be incorrect. Hardware error semantics belong in a higher application layer that has the context to make recovery decisions.
-
-**Why a centralised command engine?**
-All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, provides a single point of change for features like mutex support or async IO, and is the natural home for the transaction/retry/failure counters used in reliability measurement.
-
-**Why does `STS_SetID` not bundle EEPROM lock/unlock?**
-Bundling the lock/unlock sequence inside `STS_SetID` would hide repeated flash writes if the function were called incorrectly in a loop. Keeping the responsibility with the caller makes the flash write cost explicit and prevents accidental EEPROM wear.
-
-**Why does `STS_SetTarget` clamp negative position values to zero instead of rejecting them?**
-In position mode, a negative target has no physical meaning but a zero position is always valid. Clamping avoids a hard error for what is most likely an off-by-one in the caller's coordinate calculation, while still keeping the servo in a safe state. The other modes use sign to encode direction, so rejection there is appropriate.
+Responses are variable length, which is why the STM32 port frames them with UART IDLE-line detection rather than a fixed byte count. The servo supports four operating modes (position, speed, PWM, and step) selected through `STS_SetOperatingMode`; their semantics are described in [docs/design-decisions.md](docs/design-decisions.md).
 
 ---
 
 ## Roadmap
 
 - [x] Protocol layer: packet framing, checksum, noise-resilient parsing
-- [x] Service layer: HAL-agnostic bus abstraction, command engine, register access primitives, ping, and full command set (position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, ID)
-- [x] STM32F103 port: DMA half-duplex with IDLE-line reception, hardware-validated (240,000+ transactions)
-- [ ] Port simplification: external pull-up + AF open-drain, removing per-packet GPIO switching and the transient-drain loop ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [x] Service layer: HAL-agnostic bus abstraction, command engine, register access primitives, ping, and command coverage for position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID
+- [x] STM32F103 port: DMA half-duplex with IDLE-line reception, hardware-validated
+- [x] Transient-hypothesis measurement: oscilloscope capture found no turnaround transient, so the defensive RX flush loop was retracted and removed ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [ ] Port simplification: external pull-up and AF open-drain, removing per-packet GPIO switching ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
 - [ ] Sync Write and Bulk Read support
+- [ ] Portable on-target test suite: route `Hardware_Tests/` timing through the `STS_Delay_ms` and `STS_GetTick_ms` port hooks so the integration and stress suites can validate a new MCU port unmodified
 - [ ] Full-duplex bus-adapter path re-validation ([#9](https://github.com/grish98/Feetech_Stm32/issues/9))
 
 ---
 
 ## Compatibility
 
-The core (protocol and service layers) has no platform-specific dependencies and builds on any target with a C11 toolchain. Fixed-width integer types (`uint8_t`, `uint16_t`, `uint32_t`) are used throughout for cross-architecture correctness. The STM32F103 port is provided in `Lib/STS_Servo/Ports/` and is validated on hardware; porting to another MCU means replacing that port file and the two timing hooks.
+The core (protocol and service layers) has no platform-specific dependencies and builds on any target with a C11 toolchain. Fixed-width integer types are used throughout for cross-architecture correctness. Porting to another MCU means supplying three transport callbacks, `transmit`, `receive`, and the optional `flush_rx`; no other platform code is required to drive servos. The [porting guide](docs/porting.md) documents the full contract, and the STM32F103 port in `Lib/STS_Servo/Ports/` is a worked reference implementation.
 
 ---
 
