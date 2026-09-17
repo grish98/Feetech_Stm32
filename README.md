@@ -11,8 +11,10 @@ A portable, dependency-free C11 core for **Feetech STS series smart servos** ove
 ## Status
 
 - **Protocol and service core**: implemented and covered by **198 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass.
-- **STM32F103 port**: validated across four on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
-- **In progress**: port simplification (external pull-up and AF open-drain, removing per-packet GPIO switching) and full-duplex adapter re-validation. Tracked in the issue tracker.
+- **STM32F103 port**: validated across four historical on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
+- **Port simplification**: PA2 now stays in AF open-drain mode, removing per-packet GPIO switching and the unused scope marker.
+- **Latest bench report**: **200 hardware-test loops with no test failures**, with an external **1.5 kOhm pull-up fitted**; mean rise time approximately **60-70 ns**, worst observed approximately **200 ns**. Operation without the added resistor was also reported, but those measurements apply to the resistor-fitted setup. Full data is pending; see [hardware validation](docs/hardware-validation.md#current-af-open-drain-port).
+- **In progress**: attaching the AF_OD test logs and scope captures, and full-duplex adapter re-validation. Current receive-timing limitations are documented in the [porting guide](docs/porting.md#current-receive-timing-limitations).
 
 An intermittent test failure was traced to state persisting between test runs rather than the initially suspected bus EMI. The investigation and supporting campaign logs are documented as an engineering postmortem in **[issue #8](https://github.com/grish98/Feetech_Stm32/issues/8)**. The full hardware bring-up was merged in **[PR #11](https://github.com/grish98/Feetech_Stm32/pull/11)**.
 
@@ -54,6 +56,8 @@ The STM32F103 port is exercised by an on-target integration suite (`Hardware_Tes
 | Final | 200 | 152,980 | 0 | 0 |
 | Flush removal | 200 | 150,335 | 0 | 0 |
 | **Total** | **530** | **390,385** | **0** | **0** |
+
+These historical figures cover the earlier GPIO-switching port, with the timed turnaround flush removed for the fourth campaign. The latest AF_OD campaign is reported separately and is not included in these totals while its full log is pending.
 
 These figures characterise one bench configuration: a single MCU, servo, cable, and environment. They are direct observations, not a general reliability claim for the design. Methodology, per-campaign conditions, and the oscilloscope work that retracted an earlier transient hypothesis are documented in **[docs/hardware-validation.md](docs/hardware-validation.md)**.
 
@@ -196,7 +200,8 @@ Responses are variable length, which is why the STM32 port frames them with UART
 - [x] Service layer: HAL-agnostic bus abstraction, command engine, register access primitives, ping, and command coverage for position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID
 - [x] STM32F103 port: DMA half-duplex with IDLE-line reception, hardware-validated
 - [x] Transient-hypothesis measurement: oscilloscope capture found no turnaround transient, so the defensive RX flush loop was retracted and removed ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
-- [ ] Port simplification: external pull-up and AF open-drain, removing per-packet GPIO switching ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [x] Port simplification: PA2 stays in AF open-drain, removing per-packet GPIO switching ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [ ] Attach full AF_OD test logs and scope data: preliminary 200-loop and rise-time results used a 1.5 kOhm external pull-up; operation without it was reported separately
 - [ ] Sync Write and Bulk Read support
 - [ ] Portable on-target test suite: route `Hardware_Tests/` timing through the `STS_Delay_ms` and `STS_GetTick_ms` port hooks so the integration and stress suites can validate a new MCU port unmodified
 - [ ] Full-duplex bus-adapter path re-validation ([#9](https://github.com/grish98/Feetech_Stm32/issues/9))

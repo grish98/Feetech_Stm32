@@ -1,6 +1,6 @@
 # Hardware Validation
 
-Validation evidence for the STM32F103 port. Every figure here comes from on-target campaigns driven by the instrumented stress runner in `Hardware_Tests/`.
+Validation evidence for the STM32F103 port, including historical campaigns driven by the instrumented stress runner in `Hardware_Tests/` and preliminary observations from the current AF open-drain bench tests. Pending logs and scope captures are identified separately.
 
 ## Bench configuration
 
@@ -13,6 +13,8 @@ Validation evidence for the STM32F103 port. Every figure here comes from on-targ
 | Reception | DMA with UART IDLE-line framing |
 | Reporting | SEGGER RTT |
 | Retry policy | `max_retries = 2` during campaigns |
+
+The four tabulated campaigns below used the earlier per-packet AF_PP/input GPIO switching. The current port keeps PA2 in AF_OD, with UART TE/RE direction switching and no STM32 internal pull-up configured. Its separately reported test results are recorded under [Current AF open-drain port](#current-af-open-drain-port).
 
 USART1 on the development board is physically damaged, which is why USART2 is used. This was confirmed with an oscilloscope during bring-up.
 
@@ -50,7 +52,7 @@ These are direct observations from a single bench: one MCU, one servo, one cable
 
 Across these campaigns, the command engine recorded no retries and no terminal transport or protocol failures. These results cover the instrumented paths and do not rule out faults that produce plausible but incorrect data.
 
-Two limits on that coverage are worth stating explicitly. `uart_drain_rx` does not increment any counter, so error-recovery activity in the port is invisible to the totals. Some early returns in `sts_execute_command` also bypass `hard_failures`, including an oversized reported packet length, which returns `STS_ERR_BUF_TOO_SMALL` after the transaction has already been counted. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
+`uart_drain_rx` has no independent counter, but calls from `STM32_UART_Receive` return a transport error to the command engine, where retries or exhausted attempts are counted. Explicit flush callbacks also run before retries and after unexpected response lengths. Some early returns in `sts_execute_command` also bypass `hard_failures`, including an oversized reported packet length, which returns `STS_ERR_BUF_TOO_SMALL` after the transaction has already been counted. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
 
 ## Postmortem: intermittent acceleration failure
 
@@ -73,9 +75,34 @@ The port previously ran a defensive flush loop after each half-duplex turnaround
 
 That mechanism was tested directly. A GPIO marker on PA0 was pulsed high for the duration of the pin-mode switch, giving the oscilloscope a hardware trigger on the exact transition. No transient was observed at any resolution from 1 us/div down to 50 ns/div, using peak detect, across the full window from the switch to the servo response.
 
-The hypothesised mechanism does not occur on this hardware. The loop was removed, and the flush-removal campaign in the table above completed clean. The specific character of the garbage bytes observed during the original bring-up, on a different and now-destroyed board, was never recorded in the commit history and cannot be independently verified.
+Those captures did not support the hypothesised mechanism on the tested hardware. The loop was removed in commit `315f279`, and the flush-removal campaign in the table above completed clean: 200 runs and 150,335 transactions, with no skips, retries, or hard failures. This removed the timed per-turnaround flush, not the error-recovery drain or retry flush callback. The specific character of the garbage bytes observed during the original bring-up, on a different and now-destroyed board, was never recorded in the commit history and cannot be independently verified.
 
-A separate question remains open: PA2 currently idles as an input with the internal pull-up, nominally around 40 kOhm. That value has not been justified analytically or tested against a different servo, cable, or bus capacitance. Fitting an external pull-up and moving to AF open-drain full time would remove the per-packet GPIO switching entirely. That work is tracked in [issue #10](https://github.com/grish98/Feetech_Stm32/issues/10), now motivated by simplification and noise margin rather than by a transient that was shown not to exist.
+The earlier implementation used input mode with an internal pull-up between transmissions. The subsequent AF_OD change removes that per-packet GPIO switching; the current configuration and preliminary measurements are described below. [Issue #10](https://github.com/grish98/Feetech_Stm32/issues/10) records the investigation history.
+
+## Current AF open-drain port
+
+PA2 now stays in AF open-drain mode for both transmission and reception. Direction changes use the UART TE/RE bits. The removed turnaround flush has not been reintroduced, and no STM32 internal pull-up is configured in this mode.
+
+An external 1.5 kOhm pull-up was initially fitted because the servo was thought not to provide a pull-up. Subsequent bench operation without the added resistor showed it was unnecessary for communication on this setup. This is consistent with a pull-up already being present on the servo side; its value and circuit topology have not been independently characterised here.
+
+The following preliminary results were reported by the maintainer, with the external **1.5 kOhm pull-up fitted**:
+
+| Observation | Reported result |
+| --- | --- |
+| Hardware-test loops | 200 |
+| Hardware-test failures | 0 |
+| Mean rise time | Approximately 60-70 ns |
+| Worst observed rise time | Approximately 200 ns |
+
+The 200-loop result and these rise times do not describe the configuration without the external resistor. Operation without it was reported separately, without a quantified campaign or rise-time dataset. The new campaign is not included in the historical transaction totals above: its exact transaction count, skips, retries, retry saves, and hard failures await the full log.
+
+### Data to attach
+
+- Full stress-run output and the corresponding firmware revision/configuration.
+- Scope captures and rise-time data, including measurement thresholds, sample count, probe setup, and pull-up supply voltage.
+- Wiring/cable details and any separate measurements with the external pull-up removed.
+
+The legacy scope-marker macros and PA0 initialization have been removed because the AF_OD path no longer switches GPIO mode per packet. The port no longer configures or drives PA0; the historical scope results above are retained. Current receive-timing review findings are described in the [porting guide](porting.md#current-receive-timing-limitations).
 
 ## Reproducing a campaign
 

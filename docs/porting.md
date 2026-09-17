@@ -51,7 +51,10 @@ The bus handle owns both buffers: `tx_buf` and `rx_buf`, each `128` bytes (`STS_
 
 - The `data` pointer passed to `transmit` points into `bus->tx_buf`.
 - The `data` pointer passed to `receive` points into `bus->rx_buf`.
-- **Neither pointer may be retained after the callback returns.** The engine clears `tx_buf` and `rx_buf` at the start of each transaction, so a DMA transfer still in flight would read or write a buffer being reset. The STM32 port satisfies this by blocking until the transfer completes before returning.
+- TX must finish using `data` before `transmit` returns. The STM32 port waits for UART transmit completion.
+- RX buffers must not be cleared or reused while DMA can still write to them. The STM32 port arms RX DMA inside `transmit`, so RX can remain active after that callback returns. `receive` waits for completion or aborts reception on failure.
+
+**Current integration limitation:** the command engine clears `rx_buf` after `transmit` returns, even though the STM32 port has already armed DMA into that buffer. A sufficiently early response can therefore be partly or entirely erased. The buffer clear needs to happen before RX is armed; the current bench results do not eliminate this race. Commands that skip `receive` also leave the port's RX operation armed until an interrupt or the next transmit aborts it, so the bus must remain alive during that interval.
 
 `sts_bus_t` is self-contained, so it can be a static or stack object with no further setup.
 
@@ -84,9 +87,19 @@ A port for a single-wire bus must therefore, inside `transmit`:
 4. Release the line and enable reception.
 5. Arm the receiver before returning, so that a fast servo response is not missed.
 
-The STM32 port does this by switching PA2 between alternate-function push-pull and input with pull-up, waiting on the UART `TC` flag between the two, then arming RX DMA and enabling the IDLE interrupt. Variable-length responses are framed by the IDLE line: the DMA is armed for the full buffer, and the byte count is recovered from the DMA counter when the line goes idle.
+The STM32 port does this by keeping PA2 in alternate-function open-drain and switching UART direction through TE/RE, waiting on the UART `TC` flag before enabling RX, then arming RX DMA and enabling the IDLE interrupt. Variable-length responses are framed by the IDLE line: the DMA is armed for the full buffer, and the byte count is recovered from the DMA counter when the line goes idle.
+
+There is no per-packet GPIO reconfiguration or timed flush between TX and RX. The single SR/DR clear before a new transmission, the `uart_drain_rx` error-recovery routine, and the optional `STM32_UART_FlushRx` callback remain. The command engine calls that callback before retries and after an unexpected response length.
+
+The half-duplex configuration does not enable an STM32 internal pull-up. Operation without an added resistor has been reported on the tested servo bus. The latest 200-loop result and rise-time measurements used an external 1.5 kOhm pull-up; see [hardware validation](hardware-validation.md#current-af-open-drain-port) for the conditions and pending data.
 
 If your transport uses an external direction-switching adapter, arm reception *before* transmitting instead; the adapter may flip direction the instant the last byte goes out. The STM32 port takes this branch when configured for full duplex.
+
+### Current receive-timing limitations
+
+Besides the buffer-clear race described above, the half-duplex path enables the receiver before starting RX DMA. This leaves a short setup window before DMA can service incoming bytes. The latest tests establish operation at the tested response timing, not a bound on the minimum response delay the port can support.
+
+`USART2_IRQHandler` also checks the IDLE status flag without checking whether the IDLE interrupt is enabled. If IDLE is pending when another UART source triggers the handler, the IDLE callback can run outside the intended receive window. These are review findings in the current implementation; the AF_OD/comment update does not change their behavior.
 
 ## Error-code mapping
 
