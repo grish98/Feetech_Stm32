@@ -4,7 +4,6 @@
  * @brief          : Support utilities for STS Protocol Testing
  * @author         : Grisham Balloo
  * @date           : 2026-03-22
- * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This module provides a shared testing harness for the STS driver.

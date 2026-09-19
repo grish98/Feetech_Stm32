@@ -4,7 +4,6 @@
  * @brief          : STS Protocol Layer Unit Test Runner
  * @author         : Grisham Balloo
  * @date           : 2026-03-03
- * @version        : 1.2.0
  ******************************************************************************
  * * @details 
  * This file serves as the main entry point for the STS Protocol Layer unit 

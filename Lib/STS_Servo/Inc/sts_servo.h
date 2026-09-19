@@ -4,7 +4,6 @@
  * @brief          : STS Service Layer and Hardware Abstraction Definitions
  * @author         : Grisham Balloo
  * @date           : 2026-03-20
- * @version        : 0.2.0
  ******************************************************************************
  * @details
  * Defines the Hardware Abstraction Layer and public API for the Feetech STS

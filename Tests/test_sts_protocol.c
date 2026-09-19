@@ -4,7 +4,6 @@
  * @brief          : Unit Tests for STS Protocol Layer
  * @author         : Grisham Balloo
  * @date           : 2026-03-06
- * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This test suite provides verification for the Feetech STS
