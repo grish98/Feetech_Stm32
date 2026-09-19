@@ -91,7 +91,7 @@ The STM32 port does this by keeping PA2 in alternate-function open-drain and swi
 
 There is no per-packet GPIO reconfiguration or timed flush between TX and RX. The single SR/DR clear before a new transmission, the `uart_drain_rx` error-recovery routine, and the optional `STM32_UART_FlushRx` callback remain. The command engine calls that callback before retries and after an unexpected response length.
 
-The half-duplex configuration does not enable an STM32 internal pull-up. Operation without an added resistor has been reported on the tested servo bus. The latest 200-loop result and rise-time measurements used an external 1.5 kOhm pull-up; see [hardware validation](hardware-validation.md#current-af-open-drain-port) for the conditions and pending data.
+The half-duplex configuration does not enable an STM32 internal pull-up. Fit **1.5 kOhm from PA2/DATA to 3.3 V** for the tested **1 Mbaud, 8N1** configuration. The latest report supersedes the earlier report of resistor-free operation: removing the external pull-up caused complete communication failure on this bench, despite the servo's measured weak idle bias. The failure mechanism is unresolved. Two 200-run campaigns passed with the resistor fitted; see [hardware validation](hardware-validation.md#current-af-open-drain-port) for measurements and remaining electrical evidence gaps.
 
 If your transport uses an external direction-switching adapter, arm reception *before* transmitting instead; the adapter may flip direction the instant the last byte goes out. The STM32 port takes this branch when configured for full duplex.
 
@@ -100,6 +100,10 @@ If your transport uses an external direction-switching adapter, arm reception *b
 Besides the buffer-clear race described above, the half-duplex path enables the receiver before starting RX DMA. This leaves a short setup window before DMA can service incoming bytes. The latest tests establish operation at the tested response timing, not a bound on the minimum response delay the port can support.
 
 `USART2_IRQHandler` also checks the IDLE status flag without checking whether the IDLE interrupt is enabled. If IDLE is pending when another UART source triggers the handler, the IDLE callback can run outside the intended receive window. These are review findings in the current implementation; the AF_OD/comment update does not change their behavior.
+
+[Issue #10](https://github.com/grish98/Feetech_Stm32/issues/10) tracks further receive-state hardening in Phase 2. The current IDLE callback dereferences `hdmarx` without a receive-armed guard and calls `HAL_UART_AbortReceive` in interrupt context, while thread-side paths also abort and reset HAL state. The planned work verifies HAL abort behavior, moves abort/cleanup to thread context, protects shared state against ISR interleaving (including already-pended interrupts), adds DMA/receive-armed guards, and standardizes both wiring paths on DMA-before-IDLE arming. The full-duplex path currently enables IDLE before starting DMA. These changes and their campaign gate remain pending.
+
+Phase 3 will replace the blocking error drain with bounded register-level recovery and review whether the post-TX `TC` check is redundant. The existing drain permits up to 32 blocking receive calls with a 2 ms timeout each, but exits on the first unsuccessful call; this does not imply a fixed 64 ms delay. Phase 1 bench success does not establish that these software concerns are resolved. Adapter runtime validation remains separately tracked in [#9](https://github.com/grish98/Feetech_Stm32/issues/9).
 
 ## Error-code mapping
 

@@ -1,6 +1,6 @@
 # Hardware Validation
 
-Validation evidence for the STM32F103 port, including historical campaigns driven by the instrumented stress runner in `Hardware_Tests/` and preliminary observations from the current AF open-drain bench tests. Pending logs and scope captures are identified separately.
+Validation evidence for the STM32F103 port, including historical campaigns driven by the instrumented stress runner in `Hardware_Tests/` and the current AF open-drain Phase 1 report. Historical and AF_OD campaign totals are kept separate. Remaining evidence gaps are identified below.
 
 ## Bench configuration
 
@@ -77,30 +77,65 @@ That mechanism was tested directly. A GPIO marker on PA0 was pulsed high for the
 
 Those captures did not support the hypothesised mechanism on the tested hardware. The loop was removed in commit `315f279`, and the flush-removal campaign in the table above completed clean: 200 runs and 150,335 transactions, with no skips, retries, or hard failures. This removed the timed per-turnaround flush, not the error-recovery drain or retry flush callback. The specific character of the garbage bytes observed during the original bring-up, on a different and now-destroyed board, was never recorded in the commit history and cannot be independently verified.
 
-The earlier implementation used input mode with an internal pull-up between transmissions. The subsequent AF_OD change removes that per-packet GPIO switching; the current configuration and preliminary measurements are described below. [Issue #10](https://github.com/grish98/Feetech_Stm32/issues/10) records the investigation history.
+The updated issue records a bring-up recollection of approximately six all-zero bytes before the drain was introduced. That account does not establish the GPIO-transition mechanism. The earlier implementation used input mode with an internal pull-up between transmissions. The subsequent AF_OD change removes that per-packet GPIO switching; the current configuration and measurements are described below. [Issue #10](https://github.com/grish98/Feetech_Stm32/issues/10) records the investigation history.
 
 ## Current AF open-drain port
 
 PA2 now stays in AF open-drain mode for both transmission and reception. Direction changes use the UART TE/RE bits. The removed turnaround flush has not been reintroduced, and no STM32 internal pull-up is configured in this mode.
 
-An external 1.5 kOhm pull-up was initially fitted because the servo was thought not to provide a pull-up. Subsequent bench operation without the added resistor showed it was unnecessary for communication on this setup. This is consistent with a pull-up already being present on the servo side; its value and circuit topology have not been independently characterised here.
+The [Phase 1 electrical-validation report](https://github.com/grish98/Feetech_Stm32/issues/10#issuecomment-5740164455), updated on 19 September 2026, describes **one STS3215-HS servo, 1 Mbaud UART (8N1), and an external 1.5 kOhm pull-up from PA2/DATA to 3.3 V**. Captures used a Siglent SDS804X HD with a 10x probe setting and a 1.65 V edge trigger. The trigger level is an acquisition setting, not a receiver input threshold.
 
-The following preliminary results were reported by the maintainer, with the external **1.5 kOhm pull-up fitted**:
+**The external resistor is required in the tested configuration.** The updated report supersedes the earlier account of successful resistor-free operation: communication failed completely when the external pull-up was disconnected. Isolated-servo loading measurements indicate an approximately 10-11 kOhm idle pull-up to an effective source near 3.0 V. This characterizes idle bias, not the servo's transmitting output circuit. The precise failure mechanism without the external pull-up remains unresolved.
 
-| Observation | Reported result |
+### Functional campaigns
+
+| Campaign | Runs passed | Individual tests passed | Transactions | Retries | Hard failures |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rise-time capture | 200/200 | 6,400/6,400 | 152,140 | 0 | 0 |
+| Fall-time capture | 200/200 | 6,400/6,400 | 152,087 | 0 | 0 |
+| **Total** | **400/400** | **12,800/12,800** | **304,227** | **0** | **0** |
+
+No nonzero `uart_errors` entries were reported. Issue #10 records the Phase 1 functional non-regression gate as passed, including its no-skip criterion. These AF_OD results are separate from the 390,385 historical transactions above. They support the tested single-servo configuration; they do not establish general reliability across other bus loads or environments.
+
+### Electrical measurements
+
+The report's verified rise-time dataset contains **32,547 measurements** in two populations:
+
+| Population | Samples | Share | 10-90% rise time |
+| --- | ---: | ---: | --- |
+| Fast | 25,175 | 77.3% | 5.17-52.43 ns |
+| Slow | 7,372 | 22.7% | 151.55-197.44 ns |
+
+The overall mean is **45.922 ns**, replacing the earlier preliminary 60-70 ns summary. A later command/response capture associates the slow population with **MCU commands (approximately 195 ns)** and the fast population with **servo replies (approximately 5 ns)**. The two populations are more informative than their combined mean. The reply edges suggest stronger drive during transmission, but the servo's internal output topology remains unconfirmed.
+
+| Measurement | Reported result |
 | --- | --- |
-| Hardware-test loops | 200 |
-| Hardware-test failures | 0 |
-| Mean rise time | Approximately 60-70 ns |
-| Worst observed rise time | Approximately 200 ns |
+| Fall-time samples | 32,487 |
+| Mean / maximum fall time | 10.29 ns / 12.22 ns |
+| Settled high with external pull-up | 3.11-3.28 V |
+| Waveform minimum, mean | 51.7 mV |
+| Waveform minimum, range | -81.25 to +118.75 mV |
 
-The 200-loop result and these rise times do not describe the configuration without the external resistor. Operation without it was reported separately, without a quantified campaign or rise-time dataset. The new campaign is not included in the historical transaction totals above: its exact transaction count, skips, retries, retry saves, and hard failures await the full log.
+Waveform minima can include undershoot and do not establish settled-low voltage. The report uses the base STS3215 input limits of 2.0 V minimum high and 0.45 V maximum low as provisional references pending HS-specific confirmation. Servo input limits apply to commands; STM32 input limits must be checked separately for replies.
 
-### Data to attach
+At 1 Mbaud, the bit period is 1,000 ns. The approximately 195 ns command rise is a 10-90% measurement, not the time to cross the valid-high threshold. A first-order RC model estimates release-to-2.0 V at approximately 84-92 ns for the measured high levels. Those values are calculated, not directly measured; the servo's sampling timing is unconfirmed, so no guaranteed timing margin is claimed. The results support retaining 1.5 kOhm to 3.3 V and 1 Mbaud for subsequent phases.
 
-- Full stress-run output and the corresponding firmware revision/configuration.
-- Scope captures and rise-time data, including measurement thresholds, sample count, probe setup, and pull-up supply voltage.
-- Wiring/cable details and any separate measurements with the external pull-up removed.
+### Evidence and remaining closure
+
+The [Phase 1 report](https://github.com/grish98/Feetech_Stm32/issues/10#issuecomment-5740164455) includes scope screenshots, calculations, and these exports:
+
+- [Fall-time campaign log](https://github.com/user-attachments/files/32411134/18-09-2026-FallTimes.txt).
+- [Rise-time CSV](https://github.com/user-attachments/files/32411171/Rise_Time_C1_19700101_144040.csv).
+- [Fall-time CSV](https://github.com/user-attachments/files/32411168/Fall_Time_C1_19700101_124211.csv).
+- [Minimum-voltage CSV](https://github.com/user-attachments/files/32411170/Min_C1_19700101_124219.csv).
+
+The report's other link under "Campaign logs" points to a rise-time CSV rather than the named `13-09-2026-RiseTimes.txt` log. The rise-campaign text-log link needs correction or confirmation; it is not treated here as an attached campaign log. These results summarize the maintainer's report, rather than a new independent analysis of its raw exports.
+
+Remaining Phase 1 evidence work is to link the tested firmware revision and complete campaign evidence, including the subsequent command/response capture, and document settled-low voltage and direct receiver-threshold margin. Existing captures may suffice; focused measurements are needed where evidence is missing. A further 200-run campaign is not required solely to document the completed functional gate. If electrical checks are deferred, record that acceptance-scope change explicitly.
+
+Phase 2 receive-state hardening and its campaign gate remain pending, followed by Phase 3 cleanup and its final gate. The phase gates require at least 50 runs each with zero failures, skips, retries, hard communication failures, or unexpected UART error state, expected response lengths/parsing, and move-time distributions within the established baseline band. Full-duplex adapter runtime validation remains in [issue #9](https://github.com/grish98/Feetech_Stm32/issues/9).
+
+Multi-servo operation, deployment cable lengths, sustained high-current motor operation, and supply/environmental variation remain separate qualification work. Response-delay measurement is needed if a specific timing guarantee is relied upon; the current report establishes none.
 
 The legacy scope-marker macros and PA0 initialization have been removed because the AF_OD path no longer switches GPIO mode per packet. The port no longer configures or drives PA0; the historical scope results above are retained. Current receive-timing review findings are described in the [porting guide](porting.md#current-receive-timing-limitations).
 

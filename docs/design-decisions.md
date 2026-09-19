@@ -2,6 +2,13 @@
 
 Rationale for the choices that shaped the driver. Three of these also appear in the README; the rest live here.
 
+## Electrical interface
+
+**Why permanent AF open-drain with an external pull-up?**
+Keeping PA2 in AF_OD removes per-packet GPIO mode changes; UART TE/RE controls direction. The selected single-servo bench configuration uses 1.5 kOhm from PA2/DATA to 3.3 V at 1 Mbaud, 8N1. Two campaigns recorded 304,227 transactions with zero retries or hard communication failures. Removing the external resistor caused communication failure despite the servo's weak idle pull-up, so the resistor is required for this tested setup.
+
+Direction-separated captures measured approximately 195 ns command rise time and 5 ns reply rise time. These results support retaining the tested configuration; they do not establish the original GPIO-transition failure mechanism, an optimal resistor value, or a guaranteed receiver timing margin. Settled-low and threshold-margin evidence remain outstanding. See [hardware validation](hardware-validation.md#current-af-open-drain-port) for the measurements, evidence links, and limits of the result.
+
 ## Memory and state
 
 **Why caller-provided buffers?**
