@@ -4,7 +4,6 @@
  * @brief          : Unit test runner for STS Servo Service Layer
  * @author         : Grisham Balloo
  * @date           : 2026-03-21
- * @version        : 0.2.0
  ******************************************************************************
  * @details
  * Entry point for STS Service Layer testing using the Unity framework.

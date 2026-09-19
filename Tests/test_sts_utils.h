@@ -4,7 +4,6 @@
  * @brief          : Header for STS test support utilities
  * @author         : Grisham Balloo
  * @date           : 2026-03-08
- * @version        : 1.1.0
  ******************************************************************************
  * @details
   * This file provides a shared testing harness for the STS driver.

@@ -4,7 +4,6 @@
  * @brief          : Prototypes for STS Protocol Verification Suite
  * @author         : Grisham Balloo
  * @date           : 2026-03-6
- * @version        : 1.1.0
  ******************************************************************************
  * @details
  * This header centralizes all test function prototypes for the STS Protocol 

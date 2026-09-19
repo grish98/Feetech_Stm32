@@ -4,7 +4,6 @@
  * @brief          : Feetech STS Servo Protocol API
  * @author         : Grisham Balloo
  * @date           : 2026-03-8
- * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This module defines the public interface for the Feetech STS Servo Protocol.

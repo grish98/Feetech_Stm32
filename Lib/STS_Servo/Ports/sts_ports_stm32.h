@@ -6,6 +6,9 @@ sts_result_t STM32_UART_FlushRx(sts_bus_t *bus);
 
 /* Call once after STS_Bus_Init, before any servo communication.
  * enabled=1: STM32 half-duplex mode (direct servo wiring on PA2, no adapter).
+ *            PA2 stays AF open-drain; no internal pull-up is configured.
+ *            Fit 1.5 kOhm from PA2/DATA to 3.3 V for the tested 1 Mbaud setup.
+ *            Communication failed without this external pull-up on that bench.
  * enabled=0: full-duplex mode (Waveshare adapter, default). */
 void STM32_UART_SetHalfDuplex(void *huart, uint8_t enabled);
 

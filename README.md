@@ -1,8 +1,9 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI, and the hardware port has completed 390,385 live transactions with zero hard failures.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
+[![Latest version](https://img.shields.io/github/v/tag/grish98/Feetech_Stm32?sort=semver)](https://github.com/grish98/Feetech_Stm32/tags)
 
 **Quick links:** [API documentation](https://grish98.github.io/Feetech_Stm32/) | [Hardware validation](docs/hardware-validation.md) | [Design decisions](docs/design-decisions.md) | [Porting guide](docs/porting.md) | [Engineering postmortem](https://github.com/grish98/Feetech_Stm32/issues/8)
 
@@ -11,8 +12,10 @@ A portable, dependency-free C11 core for **Feetech STS series smart servos** ove
 ## Status
 
 - **Protocol and service core**: implemented and covered by **198 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass.
-- **STM32F103 port**: validated across four on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
-- **In progress**: port simplification (external pull-up and AF open-drain, removing per-packet GPIO switching) and full-duplex adapter re-validation. Tracked in the issue tracker.
+- **STM32F103 port**: validated across four historical on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
+- **Port simplification**: PA2 now stays in AF open-drain mode, removing per-packet GPIO switching and the unused scope marker.
+- **Latest bench report**: two complete AF_OD campaigns passed **400 runs and 12,800 individual tests**, recording **304,227 transactions with zero retries or hard communication failures**. The tested configuration uses **1.5 kOhm from PA2/DATA to 3.3 V at 1 Mbaud, 8N1**; removing the resistor caused communication failure. Direction-separated captures measured approximately **195 ns command rise time** and **5 ns reply rise time**. See [hardware validation](docs/hardware-validation.md#current-af-open-drain-port).
+- **In progress**: Phase 1 electrical evidence closure (settled-low voltage and receiver-threshold margin), Phase 2 receive-state hardening, and Phase 3 cleanup under [#10](https://github.com/grish98/Feetech_Stm32/issues/10). Full-duplex adapter re-validation remains in [#9](https://github.com/grish98/Feetech_Stm32/issues/9). Current receive-timing limitations are documented in the [porting guide](docs/porting.md#current-receive-timing-limitations).
 
 An intermittent test failure was traced to state persisting between test runs rather than the initially suspected bus EMI. The investigation and supporting campaign logs are documented as an engineering postmortem in **[issue #8](https://github.com/grish98/Feetech_Stm32/issues/8)**. The full hardware bring-up was merged in **[PR #11](https://github.com/grish98/Feetech_Stm32/pull/11)**.
 
@@ -54,6 +57,16 @@ The STM32F103 port is exercised by an on-target integration suite (`Hardware_Tes
 | Final | 200 | 152,980 | 0 | 0 |
 | Flush removal | 200 | 150,335 | 0 | 0 |
 | **Total** | **530** | **390,385** | **0** | **0** |
+
+These historical figures cover the earlier GPIO-switching port, with the timed turnaround flush removed for the fourth campaign. The current AF_OD results are kept separate because they describe a different electrical configuration:
+
+| AF_OD campaign | Runs passed | Individual tests passed | Transactions | Retries | Hard failures |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rise-time capture | 200/200 | 6,400/6,400 | 152,140 | 0 | 0 |
+| Fall-time capture | 200/200 | 6,400/6,400 | 152,087 | 0 | 0 |
+| **Total** | **400/400** | **12,800/12,800** | **304,227** | **0** | **0** |
+
+The [Phase 1 report](https://github.com/grish98/Feetech_Stm32/issues/10#issuecomment-5740164455) records a passed functional non-regression gate. Electrical evidence closure and subsequent software phases remain pending.
 
 These figures characterise one bench configuration: a single MCU, servo, cable, and environment. They are direct observations, not a general reliability claim for the design. Methodology, per-campaign conditions, and the oscilloscope work that retracted an earlier transient hypothesis are documented in **[docs/hardware-validation.md](docs/hardware-validation.md)**.
 
@@ -143,6 +156,12 @@ uint32_t failures = bus.hard_failures;
 
 ## Building and Testing
 
+### Versioning
+
+GitHub tags are the source of project versions; the badge above follows the latest tag automatically. On a push to `main`, successful host tests and static analysis allow CI to create the next tag: `v0.1` for the first merge with this workflow, then `v0.2`, `v0.3`, and so on. Feature branches and pull-request checks do not create tags. Re-running CI for an already tagged commit keeps its existing version; superseded main commits are skipped. Documentation deployment runs separately and does not gate tagging.
+
+Tags remain attached to their original commits. There are no manually maintained per-file version numbers, and dependency/tool versions are independent of the project version.
+
 The library uses CMake with a dual-target build system. Host tests run on the development machine with a native compiler, so no hardware is required. The ARM firmware target is selected automatically when an `arm-none-eabi` toolchain is configured.
 
 ### Prerequisites
@@ -196,7 +215,11 @@ Responses are variable length, which is why the STM32 port frames them with UART
 - [x] Service layer: HAL-agnostic bus abstraction, command engine, register access primitives, ping, and command coverage for position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID
 - [x] STM32F103 port: DMA half-duplex with IDLE-line reception, hardware-validated
 - [x] Transient-hypothesis measurement: oscilloscope capture found no turnaround transient, so the defensive RX flush loop was retracted and removed ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
-- [ ] Port simplification: external pull-up and AF open-drain, removing per-packet GPIO switching ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [x] Port simplification: PA2 stays in AF open-drain, removing per-packet GPIO switching ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [x] Phase 1 functional non-regression: two 200-run AF_OD campaigns, using 1.5 kOhm to 3.3 V at 1 Mbaud
+- [ ] Phase 1 evidence closure: link the tested revision and complete campaign evidence; document settled-low voltage and receiver-threshold margin ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [ ] Phase 2 receive-state hardening and its campaign gate ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
+- [ ] Phase 3 bounded error recovery, TX-completion review, documentation/compliance cleanup, and final campaign gate ([#10](https://github.com/grish98/Feetech_Stm32/issues/10))
 - [ ] Sync Write and Bulk Read support
 - [ ] Portable on-target test suite: route `Hardware_Tests/` timing through the `STS_Delay_ms` and `STS_GetTick_ms` port hooks so the integration and stress suites can validate a new MCU port unmodified
 - [ ] Full-duplex bus-adapter path re-validation ([#9](https://github.com/grish98/Feetech_Stm32/issues/9))

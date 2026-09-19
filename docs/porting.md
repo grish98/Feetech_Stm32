@@ -51,7 +51,10 @@ The bus handle owns both buffers: `tx_buf` and `rx_buf`, each `128` bytes (`STS_
 
 - The `data` pointer passed to `transmit` points into `bus->tx_buf`.
 - The `data` pointer passed to `receive` points into `bus->rx_buf`.
-- **Neither pointer may be retained after the callback returns.** The engine clears `tx_buf` and `rx_buf` at the start of each transaction, so a DMA transfer still in flight would read or write a buffer being reset. The STM32 port satisfies this by blocking until the transfer completes before returning.
+- TX must finish using `data` before `transmit` returns. The STM32 port waits for UART transmit completion.
+- RX buffers must not be cleared or reused while DMA can still write to them. The STM32 port arms RX DMA inside `transmit`, so RX can remain active after that callback returns. `receive` waits for completion or aborts reception on failure.
+
+**Current integration limitation:** the command engine clears `rx_buf` after `transmit` returns, even though the STM32 port has already armed DMA into that buffer. A sufficiently early response can therefore be partly or entirely erased. The buffer clear needs to happen before RX is armed; the current bench results do not eliminate this race. Commands that skip `receive` also leave the port's RX operation armed until an interrupt or the next transmit aborts it, so the bus must remain alive during that interval.
 
 `sts_bus_t` is self-contained, so it can be a static or stack object with no further setup.
 
@@ -84,9 +87,23 @@ A port for a single-wire bus must therefore, inside `transmit`:
 4. Release the line and enable reception.
 5. Arm the receiver before returning, so that a fast servo response is not missed.
 
-The STM32 port does this by switching PA2 between alternate-function push-pull and input with pull-up, waiting on the UART `TC` flag between the two, then arming RX DMA and enabling the IDLE interrupt. Variable-length responses are framed by the IDLE line: the DMA is armed for the full buffer, and the byte count is recovered from the DMA counter when the line goes idle.
+The STM32 port does this by keeping PA2 in alternate-function open-drain and switching UART direction through TE/RE, waiting on the UART `TC` flag before enabling RX, then arming RX DMA and enabling the IDLE interrupt. Variable-length responses are framed by the IDLE line: the DMA is armed for the full buffer, and the byte count is recovered from the DMA counter when the line goes idle.
+
+There is no per-packet GPIO reconfiguration or timed flush between TX and RX. The single SR/DR clear before a new transmission, the `uart_drain_rx` error-recovery routine, and the optional `STM32_UART_FlushRx` callback remain. The command engine calls that callback before retries and after an unexpected response length.
+
+The half-duplex configuration does not enable an STM32 internal pull-up. Fit **1.5 kOhm from PA2/DATA to 3.3 V** for the tested **1 Mbaud, 8N1** configuration. The latest report supersedes the earlier report of resistor-free operation: removing the external pull-up caused complete communication failure on this bench, despite the servo's measured weak idle bias. The failure mechanism is unresolved. Two 200-run campaigns passed with the resistor fitted; see [hardware validation](hardware-validation.md#current-af-open-drain-port) for measurements and remaining electrical evidence gaps.
 
 If your transport uses an external direction-switching adapter, arm reception *before* transmitting instead; the adapter may flip direction the instant the last byte goes out. The STM32 port takes this branch when configured for full duplex.
+
+### Current receive-timing limitations
+
+Besides the buffer-clear race described above, the half-duplex path enables the receiver before starting RX DMA. This leaves a short setup window before DMA can service incoming bytes. The latest tests establish operation at the tested response timing, not a bound on the minimum response delay the port can support.
+
+`USART2_IRQHandler` also checks the IDLE status flag without checking whether the IDLE interrupt is enabled. If IDLE is pending when another UART source triggers the handler, the IDLE callback can run outside the intended receive window. These are review findings in the current implementation; the AF_OD/comment update does not change their behavior.
+
+[Issue #10](https://github.com/grish98/Feetech_Stm32/issues/10) tracks further receive-state hardening in Phase 2. The current IDLE callback dereferences `hdmarx` without a receive-armed guard and calls `HAL_UART_AbortReceive` in interrupt context, while thread-side paths also abort and reset HAL state. The planned work verifies HAL abort behavior, moves abort/cleanup to thread context, protects shared state against ISR interleaving (including already-pended interrupts), adds DMA/receive-armed guards, and standardizes both wiring paths on DMA-before-IDLE arming. The full-duplex path currently enables IDLE before starting DMA. These changes and their campaign gate remain pending.
+
+Phase 3 will replace the blocking error drain with bounded register-level recovery and review whether the post-TX `TC` check is redundant. The existing drain permits up to 32 blocking receive calls with a 2 ms timeout each, but exits on the first unsuccessful call; this does not imply a fixed 64 ms delay. Phase 1 bench success does not establish that these software concerns are resolved. Adapter runtime validation remains separately tracked in [#9](https://github.com/grish98/Feetech_Stm32/issues/9).
 
 ## Error-code mapping
 

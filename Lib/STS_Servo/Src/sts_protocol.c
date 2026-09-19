@@ -4,7 +4,6 @@
  * @brief          : Feetech STS Servo Protocol Implementation
  * @author         : Grisham Balloo
  * @date           : 2026-03-06
- * @version        : 1.2.0
  ******************************************************************************
  * @details
  * This module implements the core logic for encoding and decoding Feetech STS
