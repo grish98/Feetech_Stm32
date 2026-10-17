@@ -37,6 +37,7 @@ set(FIRMWARE_SOURCES
     Segger_RTT/SEGGER_RTT.c    
     Hardware_Tests/Hw_Tests.c  
     Hardware_Tests/Hw_utils.c    
+    Hardware_Tests/spike_ring.c    
 )
 
 # PC Only 
@@ -70,7 +71,7 @@ if(IS_ARM_BUILD)
     list(APPEND FIRMWARE_SOURCES "startup_stm32f103xb.s")
 
     add_executable(${CMAKE_PROJECT_NAME} ${FIRMWARE_SOURCES} ${DRIVER_SOURCES})
-    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE STM32F103xB)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE STM32F103xB SPIKE_RING)
     #target_link_options(${CMAKE_PROJECT_NAME} PRIVATE 
     #    "-T${CMAKE_CURRENT_SOURCE_DIR}/STM32F103XX_FLASH.ld"
     #)

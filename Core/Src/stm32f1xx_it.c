@@ -205,10 +205,11 @@ void SysTick_Handler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-  /* Check IDLE before HAL so we capture NDTR before AbortReceive resets it */
+ #ifndef SPIKE_RING
   if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE)) {
       STM32_UART_IdleCallback();
   }
+#endif
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);
   /* USER CODE BEGIN USART2_IRQn 1 */

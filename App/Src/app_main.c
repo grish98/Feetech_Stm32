@@ -33,6 +33,13 @@ static sts_servo_t servo_1 = {0};
   servo_bus.max_retries = 0U;  /* no retries during scan */
   STM32_UART_SetHalfDuplex(&huart2, 1);  /* 1 = direct wiring (half-duplex), 0 = Waveshare adapter */
 
+  #ifdef SPIKE_RING
+  extern void Spike_RingRun(void);
+  Spike_RingRun();
+  while (1) { HAL_Delay(1000); }
+#endif
+
+
   /* ID scan: selects the first non-timeout result, including local/protocol errors. */
   SEGGER_RTT_printf(0, ">> Scanning IDs 1-15...\n");
   uint8_t found_id = 0U;
