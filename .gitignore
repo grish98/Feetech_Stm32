@@ -26,6 +26,7 @@ cmake_install.cmake
 Makefile
 *.ninja
 *.cmake
+!cmake/gcc-arm-none-eabi.cmake
 compile_commands.json
 
 
