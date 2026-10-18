@@ -17,9 +17,9 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Dependencies
       run: |
@@ -39,7 +39,7 @@ jobs:
         cd build && ctest --output-on-failure
 
   build-firmware:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -53,7 +53,7 @@ jobs:
       TOOLCHAIN_SHA256: 8f6903f8ceb084d9227b9ef991490413014d991874a1e34074443c2a72b14dbd
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Install Dependencies
       run: |
@@ -91,7 +91,7 @@ jobs:
 
 
   deploy-docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-and-test, build-firmware]
     if: github.ref == 'refs/heads/main'
     environment:
@@ -99,7 +99,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Doxygen
         run: sudo apt-get update && sudo apt-get install -y doxygen cmake
@@ -110,29 +110,29 @@ jobs:
           cmake --build build --target docs
 
       - name: Setup Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v6
 
       - name: Upload Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: './build/html'
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   tag-version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [build-and-test, build-firmware]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Create next version tag
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const tagVersion = require('./.github/scripts/tag-version.cjs');
