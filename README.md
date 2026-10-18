@@ -1,6 +1,6 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/github/v/tag/grish98/Feetech_Stm32?sort=semver)](https://github.com/grish98/Feetech_Stm32/tags)
@@ -11,7 +11,7 @@ A portable, dependency-free C11 core for **Feetech STS series smart servos** ove
 
 ## Status
 
-- **Protocol and service core**: implemented and covered by **198 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass.
+- **Protocol and service core**: implemented and covered by **198 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass. CI also builds the STM32 firmware in Debug and Release.
 - **STM32F103 port**: validated across four historical on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
 - **Port simplification**: PA2 now stays in AF open-drain mode, removing per-packet GPIO switching and the unused scope marker.
 - **Latest bench report**: two complete AF_OD campaigns passed **400 runs and 12,800 individual tests**, recording **304,227 transactions with zero retries or hard communication failures**. The tested configuration uses **1.5 kOhm from PA2/DATA to 3.3 V at 1 Mbaud, 8N1**; removing the resistor caused communication failure. Direction-separated captures measured approximately **195 ns command rise time** and **5 ns reply rise time**. See [hardware validation](docs/hardware-validation.md#current-af-open-drain-port).
@@ -158,7 +158,7 @@ uint32_t failures = bus.hard_failures;
 
 ### Versioning
 
-GitHub tags are the source of project versions; the badge above follows the latest tag automatically. On a push to `main`, successful host tests and static analysis allow CI to create the next tag: `v0.1` for the first merge with this workflow, then `v0.2`, `v0.3`, and so on. Feature branches and pull-request checks do not create tags. Re-running CI for an already tagged commit keeps its existing version; superseded main commits are skipped. Documentation deployment runs separately and does not gate tagging.
+GitHub tags are the source of project versions; the badge above follows the latest tag automatically. On a push to `main`, CI creates the next tag once host tests, static analysis and both firmware builds (Debug and Release) pass: `v0.1` for the first merge with this workflow, then `v0.2`, `v0.3`, and so on. Feature branches and pull-request checks do not create tags. Re-running CI for an already tagged commit keeps its existing version; superseded main commits are skipped. Documentation deployment waits for the same checks but does not gate tagging.
 
 Tags remain attached to their original commits. There are no manually maintained per-file version numbers, and dependency/tool versions are independent of the project version.
 
@@ -182,7 +182,7 @@ All 198 tests should pass across two suites: 40 in the protocol layer and 158 in
 
 ### Build the API documentation
 
-Requires [Doxygen](https://www.doxygen.nl/). CI publishes the same output to GitHub Pages on every push to `main`.
+Requires [Doxygen](https://www.doxygen.nl/). CI publishes the same output to GitHub Pages on each push to `main`, once the host tests, static analysis and firmware builds pass.
 
 ```bash
 cmake --build build_native --target docs
