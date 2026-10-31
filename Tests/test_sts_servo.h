@@ -169,7 +169,7 @@ void test_STS_SetTarget_StepMode_Positive_Out_Of_Range(void);
 
 /* --- STS Universal Target Routing Tests --- */
 void test_STS_SetTarget_PositionMode_Normal(void);
-void test_STS_SetTarget_PositionMode_ClampsNegativeToZero(void);
+void test_STS_SetTarget_PositionMode_Negative_Rejected(void);
 void test_STS_SetTarget_SpeedMode_Positive_CCW(void);
 void test_STS_SetTarget_SpeedMode_Negative_CW(void);
 void test_STS_SetTarget_SpeedMode_Out_Of_Range(void);
@@ -180,6 +180,52 @@ void test_STS_SetTarget_PWMMode_Positive_CCW(void);
 void test_STS_SetTarget_StepMode_Negative_CW(void);
 void test_STS_SetTarget_PWMMode_Out_Of_Range(void);
 void test_STS_SetTarget_StepMode_Out_Of_Range(void);
+
+/* --- STS Universal Target Range & Overflow Tests --- */
+void test_STS_SetTarget_PositionMode_Zero(void);
+void test_STS_SetTarget_PositionMode_Max_Boundary(void);
+void test_STS_SetTarget_PositionMode_Above_Max_Rejected(void);
+void test_STS_SetTarget_PositionMode_Uint16_Max_Rejected(void);
+void test_STS_SetTarget_PositionMode_No_Wrap_To_Zero(void);
+void test_STS_SetTarget_PositionMode_No_Wrap_To_Valid(void);
+void test_STS_SetTarget_PositionMode_No_Wrap_To_Max(void);
+void test_STS_SetTarget_PositionMode_Int32_Max_Rejected(void);
+void test_STS_SetTarget_PositionMode_Minus_One_Rejected(void);
+void test_STS_SetTarget_PositionMode_Int32_Min_Rejected(void);
+void test_STS_SetTarget_PositionMode_Int32_Min_Plus_One_Rejected(void);
+void test_STS_SetTarget_SpeedMode_Max_Boundary(void);
+void test_STS_SetTarget_SpeedMode_Above_Max_Rejected(void);
+void test_STS_SetTarget_SpeedMode_Below_Min_Rejected(void);
+void test_STS_SetTarget_SpeedMode_No_Wrap_To_Zero(void);
+void test_STS_SetTarget_SpeedMode_Negative_No_Wrap(void);
+void test_STS_SetTarget_SpeedMode_Int32_Max_Rejected(void);
+void test_STS_SetTarget_SpeedMode_Int32_Min_Plus_One_Rejected(void);
+void test_STS_SetTarget_SpeedMode_Int32_Min_Rejected(void);
+void test_STS_SetTarget_PWMMode_Max_Boundary(void);
+void test_STS_SetTarget_PWMMode_Above_Max_Rejected(void);
+void test_STS_SetTarget_PWMMode_Speed_Range_Rejected(void);
+void test_STS_SetTarget_PWMMode_No_Wrap_To_Valid(void);
+void test_STS_SetTarget_PWMMode_Int32_Min_Rejected(void);
+void test_STS_SetTarget_PWMMode_Zero(void);
+void test_STS_SetTarget_PWMMode_Int32_Max_Rejected(void);
+void test_STS_SetTarget_PWMMode_Int32_Min_Plus_One_Rejected(void);
+void test_STS_SetTarget_StepMode_Zero(void);
+void test_STS_SetTarget_StepMode_Max_Boundary(void);
+void test_STS_SetTarget_StepMode_Above_Max_Rejected(void);
+void test_STS_SetTarget_StepMode_Below_Min_Rejected(void);
+void test_STS_SetTarget_StepMode_No_Wrap_To_Valid(void);
+void test_STS_SetTarget_StepMode_Int32_Min_Rejected(void);
+void test_STS_SetTarget_StepMode_Int32_Max_Rejected(void);
+void test_STS_SetTarget_StepMode_Int32_Min_Plus_One_Rejected(void);
+void test_STS_SetTarget_InvalidMode_Int32_Min(void);
+void test_STS_SetTarget_Null_Servo_Int32_Min(void);
+void test_STS_SetTarget_Propagates_Timeout(void);
+void test_STS_SetTarget_Propagates_Hardware_Error(void);
+void test_STS_SetTarget_SpeedMode_Propagates_Timeout(void);
+void test_STS_SetTarget_PWMMode_Propagates_Timeout(void);
+void test_STS_SetTarget_StepMode_Propagates_Timeout(void);
+void test_STS_SetTarget_Null_Bus(void);
+void test_STS_SetTarget_Null_Bus_Range_Checked_First(void);
 
 /* --- STS Torque Limit Tests --- */
 void test_STS_SetTorqueLimit_Null_Guard(void);

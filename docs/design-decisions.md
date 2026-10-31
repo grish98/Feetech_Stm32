@@ -61,8 +61,8 @@ Direction for speed, PWM, and step modes is supplied explicitly through the `dir
 **Why does `STS_SetTarget` use the sign of its argument to encode direction?**
 `STS_SetTarget` is a convenience dispatcher that routes to the correct command for the servo's current mode, so it needs one argument type that can express every mode's target. Speed, PWM, and step all need a direction; position does not. Taking a signed `int32_t` and reading the sign as direction gives a single uniform call for all four modes.
 
-**Why does `STS_SetTarget` clamp negative position values to zero instead of rejecting them?**
-In position mode a negative target is clamped to zero, because position has no direction semantics and zero is always a valid, safe position. Rejecting it would turn what is most likely an off-by-one in the caller's coordinate maths into a hard error. Applications that require strict range validation can call `STS_SetTargetPosition` directly, which enforces the full range.
+**Why does `STS_SetTarget` reject out-of-range targets instead of clamping them?**
+A target outside the active mode's range returns `STS_ERR_INVALID_PARAM` and nothing is sent. This covers targets above the mode's maximum, of any size, and negative targets in position mode. Clamping would return `STS_OK` for a command that was not carried out as requested: in step mode a relative move would be silently shortened, and in speed mode a miscalculated target would become full speed. A caller on production equipment needs to learn that its target was wrong, so the wrapper applies the same rule as `STS_SetTargetPosition`, `STS_SetTargetSpeed`, `STS_SetTargetPWM` and `STS_SetTargetStep`. Before narrowing to the 16-bit register value, the wrapper rejects any magnitude above `UINT16_MAX`, so a large target cannot wrap into a valid one; each per-mode function then enforces its own, smaller limit.
 
 ## Configuration
 
