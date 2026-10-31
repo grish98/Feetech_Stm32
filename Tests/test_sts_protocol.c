@@ -292,12 +292,13 @@ void test_ParseResponse_HardwareError(void) {
     // CS: ~(01 + 02 + 04) = ~0x07 = 0xF8
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x04U, 0xF8U};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_HardwareError_With_Noise_Prefix(void) {
@@ -312,7 +313,7 @@ void test_ParseResponse_HardwareError_With_Noise_Prefix(void) {
         STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x04U, 0xF8U
     };
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx),
@@ -327,8 +328,9 @@ void test_ParseResponse_HardwareError_ParamLen_Zeroed(void) {
     uint8_t out_data[10] = {0U};
     uint16_t out_len = 0xFFFFU; // Intentionally non-zero
 
-    sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx),
-                       out_data, (uint16_t)sizeof(out_data), &out_len);
+    TEST_ASSERT_EQUAL(STS_ERR_HARDWARE,
+        sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx),
+                           out_data, (uint16_t)sizeof(out_data), &out_len));
 
     TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
@@ -339,24 +341,26 @@ void test_ParseResponse_IDMismatch(void) {
     // Packet belongs to ID 0x01, but we request ID 0x02
     uint8_t rx[] = {STS_HEADER, STS_HEADER, INCORRECT_ID, 0x02U, 0x00U, 0xFCU};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TARGET_ID, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_ID_MISMATCH, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_ChecksumError(void) {
     // Valid structure but checksum byte forced to 0x00 — must be rejected
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x00U, 0x00U};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_CHECKSUM, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_MinimumLength(void) {
@@ -364,7 +368,7 @@ void test_ParseResponse_MinimumLength(void) {
     // CS: ~(01 + 02 + 00) = ~0x03 = 0xFC
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: must be overwritten with 0
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
@@ -377,26 +381,34 @@ void test_ParseResponse_LengthMismatch(void) {
     // Len field claims 4 (8 bytes total), but only 7 bytes provided
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x04U, 0x00U, 0x0AU, 0x05U};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_MALFORMED, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_NullGuards(void) {
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
-    uint16_t out_len;
+    uint8_t out_data[10] = {0U};
+    uint16_t out_len = 0xFFFFU; // Sentinel: not written on STS_ERR_NULL_PTR
 
     // Null output data buffer
     TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR,
         sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
                            NULL, (uint16_t)sizeof(rx), &out_len));
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFU, out_len);
     // Null rx buffer
     TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR,
         sts_parse_response(TEST_ID_DEFAULT, NULL, (uint16_t)STS_MIN_PACKET_SIZE,
                            rx, (uint16_t)sizeof(rx), &out_len));
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFU, out_len);
+    // Null length output
+    TEST_ASSERT_EQUAL(STS_ERR_NULL_PTR,
+        sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
+                           out_data, (uint16_t)sizeof(out_data), NULL));
 }
 
 void test_ParseResponse_OverloadError(void) {
@@ -404,46 +416,50 @@ void test_ParseResponse_OverloadError(void) {
     // CS: ~(01 + 02 + 08) = ~0x0B = 0xF4
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x02U, 0x08U, 0xF4U};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_HARDWARE, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_HeaderError_FirstByte(void) {
     // First header byte corrupt (0x00 instead of 0xFF)
     uint8_t rx[] = {0x00U, 0xFFU, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     TEST_ASSERT_EQUAL(STS_ERR_HEADER,
         sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
                            out_data, (uint16_t)sizeof(out_data), &out_len));
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_HeaderError_SecondByte(void) {
     // Second header byte corrupt (0x00 instead of 0xFF)
     uint8_t rx[] = {0xFFU, 0x00U, TEST_ID_DEFAULT, TEST_MIN_RESP_LEN, 0x00U, TEST_MIN_RESP_CS};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     TEST_ASSERT_EQUAL(STS_ERR_HEADER,
         sts_parse_response(TEST_ID_DEFAULT, rx, (uint16_t)STS_MIN_PACKET_SIZE,
                            out_data, (uint16_t)sizeof(out_data), &out_len));
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_IncompletePacket(void) {
     // Complete packet is 8 bytes — passing 7 simulates a truncated UART buffer
     uint8_t rx[] = {STS_HEADER, STS_HEADER, TEST_ID_DEFAULT, 0x04U, 0x00U, 0x0AU, 0x05U, 0xEBU};
     uint8_t out_data[10] = {0U};
-    uint16_t out_len;
+    uint16_t out_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)(sizeof(rx) - 1U), out_data, (uint16_t)sizeof(out_data), &out_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_MALFORMED, result);
+    TEST_ASSERT_EQUAL_UINT16(0U, out_len);
 }
 
 void test_ParseResponse_MaxPayload(void) {
@@ -508,13 +524,13 @@ void test_ParseResponse_OutputBufferSafety(void) {
     rx[(uint16_t)sizeof(rx) - 1U] = checksum;
 
     uint8_t small_param_buf[2] = {0xEEU, 0xEEU};
-    uint16_t param_len = 0U;
+    uint16_t param_len = 0xFFFFU; // Intentionally non-zero
 
     sts_result_t result = sts_parse_response(
         TEST_ID_DEFAULT, rx, (uint16_t)sizeof(rx), small_param_buf, (uint16_t)sizeof(small_param_buf), &param_len);
 
     TEST_ASSERT_EQUAL(STS_ERR_BUF_TOO_SMALL, result);
-    TEST_ASSERT_EQUAL_UINT16(0U, param_len); // Must not be modified on failure
+    TEST_ASSERT_EQUAL_UINT16(0U, param_len); // Zeroed on any failure after the NULL checks
 
     TEST_ASSERT_EQUAL_HEX8(0xEEU, small_param_buf[0]); 
     TEST_ASSERT_EQUAL_HEX8(0xEEU, small_param_buf[1]);
@@ -525,14 +541,17 @@ void test_ParseResponse_JunkData(void) {
     const uint8_t all_zeros[10] = {0U};
     const uint8_t all_ones[10]  = {0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU, 0xFFU};
     uint8_t param_buf[10] = {0U};
-    uint16_t param_len = 0U;
+    uint16_t param_len = 0xFFFFU; // Sentinel: zeroed on any failure after the NULL checks
 
     TEST_ASSERT_NOT_EQUAL(STS_OK,
         sts_parse_response(TEST_ID_DEFAULT, all_zeros, (uint16_t)sizeof(all_zeros),
                            param_buf, (uint16_t)sizeof(param_buf), &param_len));
+    TEST_ASSERT_EQUAL_UINT16(0U, param_len);
+    param_len = 0xFFFFU;
     TEST_ASSERT_NOT_EQUAL(STS_OK,
         sts_parse_response(TEST_ID_DEFAULT, all_ones, (uint16_t)sizeof(all_ones),
                            param_buf, (uint16_t)sizeof(param_buf), &param_len));
+    TEST_ASSERT_EQUAL_UINT16(0U, param_len);
 }
 
 /* =========================================================================
