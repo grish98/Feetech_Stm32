@@ -120,10 +120,10 @@ int main(void) {
     RUN_TEST(test_STS_SetTorqueEnable_NonStandard_True);
     RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
     RUN_TEST(test_STS_SetTorqueEnable_Error_Propagation);
-    RUN_TEST(test_STS_SetTorqueEnable_Null_Pointer);
 
     printf("\n--- STS Position Control Tests ---\n");
     RUN_TEST(test_STS_GetPresentPosition_Success);
+    RUN_TEST(test_STS_SetTargetPosition_Success);
     RUN_TEST(test_STS_Position_API_Null_Guards);
     RUN_TEST(test_STS_GetPresentPosition_Endianness);
     RUN_TEST(test_STS_SetTargetPosition_Hardware_Fault);
@@ -150,8 +150,11 @@ int main(void) {
     RUN_TEST(test_STS_SetTargetAcceleration_Success);
     RUN_TEST(test_STS_SetTargetAcceleration_Out_Of_Range);
     RUN_TEST(test_STS_SetTargetAcceleration_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetAcceleration_Min_Boundary);
     RUN_TEST(test_STS_SetTargetSpeed_Max_Boundary);
+    RUN_TEST(test_STS_SetTargetSpeed_Min_Boundary);
     RUN_TEST(test_STS_SetTargetSpeed_Reverse_Direction_Allowed);
+    RUN_TEST(test_STS_SetTargetSpeed_Max_Reverse_Allowed);
 
     printf("\n--- STS Operating Mode Tests ---\n");
     RUN_TEST(test_STS_SetOperatingMode_Null_Guard);
