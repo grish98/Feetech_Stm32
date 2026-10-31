@@ -1,6 +1,6 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 198 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 252 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/github/v/tag/grish98/Feetech_Stm32?sort=semver)](https://github.com/grish98/Feetech_Stm32/tags)
@@ -30,7 +30,7 @@ An intermittent test failure was traced to state persisting between test runs ra
 - **Granular error reporting**: separate result codes distinguish validation, protocol, transport, timeout, and device faults
 - **Portable**: written in C11 with fixed-width types; no platform-specific dependencies in the core
 - **Broad command coverage**: position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID control
-- **198 host unit tests** (Unity/CTest), plus an on-target hardware integration and stress suite
+- **252 host unit tests** (Unity/CTest), plus an on-target hardware integration and stress suite
 
 ---
 
@@ -84,6 +84,9 @@ All service layer transactions route through a single `sts_execute_command` func
 Dynamic allocation can introduce variable latency, fragmentation, and runtime allocation failures. Caller-provided API buffers make memory ownership and capacity explicit while keeping the core usable on targets without a heap.
 
 The full set, including the operating-mode and direction-encoding semantics, is in **[docs/design-decisions.md](docs/design-decisions.md)**.
+
+For receive ring buffer setup, recovery and implementation rationale, see
+**[Ring buffer design](docs/ring-buffer.md)**.
 
 ---
 
@@ -178,7 +181,7 @@ cmake --build build_native --config Debug
 ctest --test-dir build_native -C Debug --output-on-failure
 ```
 
-All 198 tests should pass across two suites: 40 in the protocol layer and 158 in the service and command layers. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
+All 252 tests should pass across three suites: 40 in the protocol layer, 158 in the service and command layers, and 54 in the receive ring buffer. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
 
 ### Build the API documentation
 

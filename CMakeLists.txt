@@ -20,15 +20,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 # Core project settings
 project(${CMAKE_PROJECT_NAME})
 
-# Shared Library (Used by BOTH)
+# Protocol and service sources shared by firmware and host tests
 set(DRIVER_SOURCES
     Lib/STS_Servo/Src/sts_protocol.c
     Lib/STS_Servo/Src/sts_servo.c
     Lib/STS_Servo/Src/sts_servo_cmd.c
 )
 
-# STM32 Only 
+# Firmware only
 set(FIRMWARE_SOURCES
+    Lib/STS_Servo/Src/sts_ring_buffer.c
     Core/Src/main.c
     Core/Src/stm32f1xx_it.c
     Lib/STS_Servo/Ports/sts_ports_stm32.c
@@ -52,6 +53,14 @@ set(TEST_SERVO_SOURCES
     Tests/test_sts_servo.c
     Tests/Unity/unity.c
     Tests/test_sts_utils.c
+)
+
+# The ring module stands alone: linking only its own source keeps it that way
+set(TEST_RING_BUFFER_SOURCES
+    Tests/test_runner_ring_buffer.c
+    Tests/test_sts_ring_buffer.c
+    Tests/Unity/unity.c
+    Lib/STS_Servo/Src/sts_ring_buffer.c
 )
 
 # Detect if we are using the ARM Toolchain or Native (Windows)
@@ -114,6 +123,15 @@ else()
     target_compile_definitions(test_servo PRIVATE UNIT_TESTING)
     add_test(NAME ServoTests COMMAND test_servo)
 
+    # ---  Ring Buffer Test Executable ---
+    add_executable(test_ring_buffer ${TEST_RING_BUFFER_SOURCES})
+    target_include_directories(test_ring_buffer PRIVATE
+        Lib/STS_Servo/Inc
+        Tests
+        Tests/Unity
+    )
+    add_test(NAME RingBufferTests COMMAND test_ring_buffer)
+
     # --- Doxygen Section ---
     find_package(Doxygen)
     if(DOXYGEN_FOUND)
@@ -126,6 +144,7 @@ else()
         )
         set(DOC_INPUT 
             "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
+            "${CMAKE_CURRENT_SOURCE_DIR}/docs/ring-buffer.md"
             "${CMAKE_CURRENT_SOURCE_DIR}/Lib" 
             "${CMAKE_CURRENT_SOURCE_DIR}/App"
         )

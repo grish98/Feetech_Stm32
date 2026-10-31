@@ -17,6 +17,9 @@ Dynamic allocation can introduce variable latency, fragmentation, and runtime al
 **Why stateless parsing?**
 The parser holds no internal state between calls. Each call to `sts_parse_response` is independent, so responses for multiple servo instances can be parsed without shared parser state. Access to a shared physical bus still requires coordination by the service or application layer; statelessness in the parser does not by itself make concurrent bus use safe.
 
+The receive ring buffer's overwrite checks, counter limits and memory
+requirements are explained in [Ring buffer design](ring-buffer.md).
+
 ## Transactions
 
 **Why a centralised command engine?**
