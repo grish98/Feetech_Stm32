@@ -120,7 +120,9 @@ sts_result_t sts_create_packet(uint8_t id, uint8_t instruction, const uint8_t* p
  * @param rx_len         The length of data in rx_buf.
  * @param param_buf      [Out] Buffer to store extracted parameters.
  * @param param_buf_size The capacity of the param_buf buffer.
- * @param param_len      [Out] Number of bytes actually extracted.
+ * @param param_len      [Out] Number of bytes actually extracted. Set to 0 on
+ *                       any failure after the NULL checks; not written on
+ *                       STS_ERR_NULL_PTR.
  * @return sts_result_t STS_OK on success, or relevant error code.
  */
 sts_result_t sts_parse_response(uint8_t expected_id, const uint8_t* rx_buf, uint16_t rx_len,  uint8_t* param_buf, uint16_t param_buf_size,uint16_t* param_len);
