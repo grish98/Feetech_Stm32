@@ -159,6 +159,10 @@
 #define EXPECTED_REG_GOAL_POSITION  0x2AU
 #define EXPECTED_REG_GOAL_SPEED     0x2EU
 
+/* --- Expected PING Packet: FF FF id 02 01 cs --- */
+#define EXPECTED_PING_LEN_BYTE      0x02U
+#define EXPECTED_INST_PING          0x01U
+
 /* --- Nonzero Seeds: a write of zero must show up in the no-side-effect snapshot --- */
 #define TEST_SEED_TRANSACTIONS      11U
 #define TEST_SEED_RETRIES           22U
@@ -2153,4 +2157,1035 @@ void test_STS_SetID_Success(void) {
     dummy_uart_port.rx_len = EXPECTED_WRITE_ACK_LEN;
 
     TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetID(&test_servo, TEST_MOCK_NEW_ID));
+}
+
+/* ==========================================================================
+ * SCRIPTED TRANSPORT SELF-TESTS
+ * ========================================================================== */
+
+#define SCRIPT_CAP_SMALL            2U
+#define SCRIPT_TX_LIMIT             300U      /* Required default cap, written independently of the harness */
+#define SCRIPT_CAP_ABOVE_LIMIT      1000U
+#define SCRIPT_QUEUE_CAPACITY       256U
+#define SCRIPT_QUEUE_FIRST_FILL     200U
+#define SCRIPT_WRAP_INDEX           256U      /* First transmit index a uint8_t cannot hold */
+#define SCRIPT_LONG_STEPS           (SCRIPT_WRAP_INDEX + 2U)
+
+static mock_script_t script;
+static uint8_t script_ack[EXPECTED_WRITE_ACK_LEN];
+static uint8_t script_bulk[SCRIPT_QUEUE_FIRST_FILL];
+static mock_step_t script_long_steps[SCRIPT_LONG_STEPS];
+static const uint8_t script_alt_reply[] = {0x55U, 0x66U, 0x77U, 0x88U};
+static uint32_t script_fail_count;
+static const char *script_fail_reason;
+
+static void record_fail(const char *reason) {
+    script_fail_count++;
+    script_fail_reason = reason;
+}
+
+/* Rebinds the fixture bus to the scripted transport; the servo stays at TEST_VALID_ID. */
+static void use_script(const mock_step_t *steps, uint16_t step_count) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, script_ack);
+    mock_script_reset(&script, steps, step_count);
+    (void)STS_Bus_Init(&test_bus, &script, mock_script_tx, mock_script_rx);
+    test_bus.flush_rx = mock_script_flush;
+    script_fail_count = 0U;
+    script_fail_reason = NULL;
+}
+
+/* Sends n one-byte packets straight to the transport and checks every one is accepted. */
+static void send_accepted_packets(uint32_t n) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    for (uint32_t i = 0U; i < n; i++) {
+        TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    }
+}
+
+void test_Mock_Script_Reply_Arrives_At_Its_Transmit(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+}
+
+void test_Mock_Script_Reply_Order_Reversed(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK}, {NULL, 0U, STS_OK} };
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_servo_ping(&test_servo));
+}
+
+void test_Mock_Script_Consumes_Exactly_What_It_Returns(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_Uneven_Reads_Return_Every_Byte(void) {
+    const uint8_t reply[] = {0x11U, 0x22U, 0x33U, 0x44U};
+    const mock_step_t steps[] = { {reply, sizeof(reply), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t first[1];
+    uint8_t rest[3];
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, first, sizeof(first), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rest, sizeof(rest), TEST_TIMEOUT_MS));
+
+    TEST_ASSERT_EQUAL_HEX8(reply[0], first[0]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(&reply[1], rest, sizeof(rest));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_No_Reply_Past_End(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT32(2U, script.tx_count);
+}
+
+void test_Mock_Script_Lost_Reply_Ignores_Length(void) {
+    const mock_step_t steps[] = { {NULL, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_Transmit_Injection_Hits_Chosen_Transmit(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_ERR_TX_FAIL},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+    TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT32(2U, script.tx_count);
+}
+
+void test_Mock_Script_Transmit_Injection_Returns_Chosen_Code(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_ERR_BUSY},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 3U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+}
+
+void test_Mock_Script_Receive_Injection_Hits_Chosen_Call(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    use_script(steps, 2U);
+    script.discard_on_tx  = 1U;
+    script.rx_fail_call   = 2U;
+    script.rx_fail_result = STS_ERR_RX_FAIL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_RX_FAIL, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_servo_ping(&test_servo));
+    TEST_ASSERT_EQUAL_UINT32(4U, script.rx_count);
+}
+
+void test_Mock_Script_Receive_Injection_On_Empty_Queue(void) {
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(NULL, 0U);
+    script.rx_fail_call   = 1U;
+    script.rx_fail_result = STS_ERR_BUSY;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_UINT32(2U, script.rx_count);
+}
+
+void test_Mock_Script_Receive_Injection_Keeps_Queued_Bytes(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(steps, 1U);
+    script.rx_fail_call   = 1U;
+    script.rx_fail_result = STS_ERR_RX_FAIL;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_RX_FAIL, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(script_ack, rx, sizeof(rx));
+}
+
+void test_Mock_Script_Failed_Transmit_Is_Logged(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_TX_FAIL} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(packet), script.tx_log_len[0]);
+    TEST_ASSERT_EQUAL_HEX8(TEST_DATA_BYTE, script.tx_log[0][0]);
+}
+
+void test_Mock_Script_Failed_Transmit_Discards_When_Set(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK}, {NULL, 0U, STS_ERR_TX_FAIL} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 2U);
+    script.discard_on_tx = 1U;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_Failed_Transmit_Keeps_Bytes_Without_Discard(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK}, {NULL, 0U, STS_ERR_TX_FAIL} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+}
+
+void test_Mock_Script_Flush_Empties_Queue_And_Counts(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, script.flush_count);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+}
+
+void test_Mock_Script_Repeated_Flushes_Keep_Counters_And_Schedule(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_alt_reply, sizeof(script_alt_reply), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(steps, 2U);
+    script.rx_fail_call   = 3U;
+    script.rx_fail_result = STS_ERR_BUSY;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    TEST_ASSERT_EQUAL_UINT32(2U, script.flush_count);
+
+    /* The next transmit gets the next step, and the receive schedule carries on across flushes. */
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(script_alt_reply, rx, sizeof(rx));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+
+    TEST_ASSERT_EQUAL_UINT32(2U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT32(3U, script.rx_count);
+}
+
+void test_Mock_Script_Timeout_Leaves_Queue(void) {
+    const mock_step_t steps[] = { {script_ack, STS_PKT_FIXED_TOTAL, STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[EXPECTED_WRITE_ACK_LEN];
+    use_script(steps, 1U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_UINT16(STS_PKT_FIXED_TOTAL, script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, STS_PKT_FIXED_TOTAL, TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(script_ack, rx, STS_PKT_FIXED_TOTAL);
+}
+
+void test_Mock_Script_Unread_Bytes_Persist_Without_Discard(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(steps, 2U);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+
+    /* The first reply's last two bytes come out ahead of the second reply. */
+    const uint8_t expected[STS_PKT_FIXED_TOTAL] = {script_ack[4], script_ack[5], script_ack[0], script_ack[1]};
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, rx, sizeof(rx));
+}
+
+void test_Mock_Script_Discard_On_Transmit_Clears_Unread_Bytes(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(steps, 2U);
+    script.discard_on_tx = 1U;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(script_ack, rx, sizeof(rx));
+}
+
+void test_Mock_Script_Reset_Installs_Default_Fail(void) {
+    use_script(NULL, 0U);
+    TEST_ASSERT_EQUAL_PTR(mock_script_default_fail, script.on_fail);
+}
+
+void test_Mock_Script_Cap_Hook_Fires_After_Cap(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(NULL, 0U);
+    script.tx_cap  = SCRIPT_CAP_SMALL;
+    script.on_fail = record_fail;
+
+    send_accepted_packets(SCRIPT_CAP_SMALL);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, script_fail_count);
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_CAP, script_fail_reason);
+    TEST_ASSERT_EQUAL_UINT32(SCRIPT_CAP_SMALL, script.tx_count);
+}
+
+void test_Mock_Script_Cap_Below_Limit_Is_Honoured(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(NULL, 0U);
+    script.tx_cap  = SCRIPT_TX_LIMIT - 1U;
+    script.on_fail = record_fail;
+
+    send_accepted_packets(SCRIPT_TX_LIMIT - 1U);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_CAP, script_fail_reason);
+}
+
+void test_Mock_Script_Default_Cap_Is_Limit(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(NULL, 0U);
+    script.on_fail = record_fail;
+
+    send_accepted_packets(SCRIPT_TX_LIMIT);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_CAP, script_fail_reason);
+}
+
+void test_Mock_Script_Cap_Above_Limit_Is_Clamped(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(NULL, 0U);
+    script.tx_cap  = SCRIPT_CAP_ABOVE_LIMIT;
+    script.on_fail = record_fail;
+
+    send_accepted_packets(SCRIPT_TX_LIMIT);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_CAP, script_fail_reason);
+}
+
+void test_Mock_Script_Logs_Longest_Packet(void) {
+    uint8_t packet[STS_MAX_TX_BUFFER];
+    for (uint16_t i = 0U; i < sizeof(packet); i++) {
+        packet[i] = (uint8_t)i;
+    }
+    use_script(NULL, 0U);
+    script.on_fail = record_fail;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(packet), script.tx_log_len[0]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(packet, script.tx_log[0], sizeof(packet));
+}
+
+void test_Mock_Script_Overlong_Packet_Fails(void) {
+    uint8_t packet[STS_MAX_TX_BUFFER + 1U];
+    memset(packet, TEST_DATA_BYTE, sizeof(packet));
+    use_script(NULL, 0U);
+    script.on_fail = record_fail;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, script_fail_count);
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_PACKET, script_fail_reason);
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+void test_Mock_Script_Queue_Fills_To_Capacity_Then_Fails(void) {
+    const mock_step_t steps[] = { {script_bulk, SCRIPT_QUEUE_FIRST_FILL, STS_OK},
+                                  {script_bulk, SCRIPT_QUEUE_CAPACITY - SCRIPT_QUEUE_FIRST_FILL, STS_OK},
+                                  {script_bulk, 1U, STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 3U);
+    script.on_fail = record_fail;
+
+    send_accepted_packets(2U);
+    TEST_ASSERT_EQUAL_UINT16(SCRIPT_QUEUE_CAPACITY, script.queue_len);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_QUEUE, script_fail_reason);
+    TEST_ASSERT_EQUAL_UINT16(SCRIPT_QUEUE_CAPACITY, script.queue_len);
+}
+
+void test_Mock_Script_Logs_Every_Packet_In_Order(void) {
+    const uint8_t expected_first[]  = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, TEST_VALID_ID,
+                                       EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xF2U};
+    const uint8_t expected_second[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, TEST_ALT_ID,
+                                       EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xE8U};
+    use_script(NULL, 0U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_servo_ping(&test_servo));
+    (void)STS_Servo_Init(&test_servo, &test_bus, TEST_ALT_ID);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_servo_ping(&test_servo));
+
+    TEST_ASSERT_EQUAL_UINT32(2U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(expected_first), script.tx_log_len[0]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_first, script.tx_log[0], sizeof(expected_first));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(expected_second), script.tx_log_len[1]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_second, script.tx_log[1], sizeof(expected_second));
+}
+
+void test_Mock_Script_Index_Past_256_Keeps_Log_And_Steps(void) {
+    static const uint8_t first_reply[] = {0xA0U};
+    static const uint8_t wrap_reply[]  = {0xB6U};
+    uint8_t rx[1];
+    memset(script_long_steps, 0, sizeof(script_long_steps));
+    script_long_steps[0]                 = (mock_step_t){first_reply, sizeof(first_reply), STS_OK};
+    script_long_steps[SCRIPT_WRAP_INDEX] = (mock_step_t){wrap_reply, sizeof(wrap_reply), STS_OK};
+    use_script(script_long_steps, SCRIPT_LONG_STEPS);
+
+    for (uint32_t i = 0U; i <= SCRIPT_WRAP_INDEX; i++) {
+        const uint8_t packet[] = { (uint8_t)(i & 0xFFU), (uint8_t)(i >> 8) };
+        TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+        if (i == 0U) {
+            TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+            TEST_ASSERT_EQUAL_HEX8(first_reply[0], rx[0]);
+        }
+    }
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_HEX8(wrap_reply[0], rx[0]);
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+
+    const uint8_t expected_0[]   = {0x00U, 0x00U};
+    const uint8_t expected_255[] = {0xFFU, 0x00U};
+    const uint8_t expected_256[] = {0x00U, 0x01U};
+    TEST_ASSERT_EQUAL_UINT32(SCRIPT_WRAP_INDEX + 1U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT16(sizeof(expected_0), script.tx_log_len[0]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_0, script.tx_log[0], sizeof(expected_0));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(expected_255), script.tx_log_len[SCRIPT_WRAP_INDEX - 1U]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_255, script.tx_log[SCRIPT_WRAP_INDEX - 1U], sizeof(expected_255));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(expected_256), script.tx_log_len[SCRIPT_WRAP_INDEX]);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(expected_256, script.tx_log[SCRIPT_WRAP_INDEX], sizeof(expected_256));
+}
+
+void test_Mock_Script_Discard_Applies_Past_Script_End(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 1U);
+    script.discard_on_tx = 1U;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_Flush_Keeps_Discard_Setting(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK},
+                                  {NULL, 0U, STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(steps, 3U);
+    script.discard_on_tx = 1U;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(sizeof(script_ack), script.queue_len);
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT16(0U, script.queue_len);
+}
+
+void test_Mock_Script_Receive_Injection_Past_255_Calls(void) {
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(NULL, 0U);
+    script.rx_fail_call   = SCRIPT_TX_LIMIT;
+    script.rx_fail_result = STS_ERR_BUSY;
+
+    for (uint32_t call = 1U; call < SCRIPT_TX_LIMIT; call++) {
+        TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    }
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_UINT32(SCRIPT_TX_LIMIT + 1U, script.rx_count);
+}
+
+void test_Mock_Script_Receive_Injection_Does_Not_Refire_After_Wrap(void) {
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    use_script(NULL, 0U);
+    script.rx_fail_call   = 1U;
+    script.rx_fail_result = STS_ERR_BUSY;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUSY, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    for (uint32_t call = 2U; call <= 2U * SCRIPT_TX_LIMIT; call++) {
+        TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    }
+    TEST_ASSERT_EQUAL_UINT32(2U * SCRIPT_TX_LIMIT, script.rx_count);
+}
+
+void test_Mock_Script_Flush_Count_Past_255(void) {
+    use_script(NULL, 0U);
+
+    for (uint32_t i = 0U; i < SCRIPT_TX_LIMIT; i++) {
+        TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    }
+    TEST_ASSERT_EQUAL_UINT32(SCRIPT_TX_LIMIT, script.flush_count);
+}
+
+void test_Mock_Script_Timeouts_And_Discards_Are_Not_Flushes(void) {
+    const mock_step_t steps[] = { {script_ack, sizeof(script_ack), STS_OK},
+                                  {script_ack, sizeof(script_ack), STS_OK} };
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    uint8_t rx[EXPECTED_WRITE_ACK_LEN + 2U];
+    use_script(steps, 2U);
+    script.discard_on_tx = 1U;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, mock_script_rx(&test_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_OK, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.flush_count);
+}
+
+void test_Mock_Script_Flush_Keeps_Cap_And_Hook(void) {
+    use_script(NULL, 0U);
+    script.tx_cap  = SCRIPT_CAP_SMALL;
+    script.on_fail = record_fail;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Bus_FlushRx(&test_bus));
+    send_accepted_packets(SCRIPT_CAP_SMALL);
+
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, script_fail_count);
+    TEST_ASSERT_EQUAL_PTR(record_fail, script.on_fail);
+}
+
+void test_Mock_Script_Cap_Just_Above_Limit_Is_Clamped(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    use_script(NULL, 0U);
+    script.tx_cap  = SCRIPT_TX_LIMIT + 1U;
+    script.on_fail = record_fail;
+
+    send_accepted_packets(SCRIPT_TX_LIMIT);
+    TEST_ASSERT_EQUAL_UINT32(0U, script_fail_count);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, mock_script_tx(&test_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_STRING(MOCK_SCRIPT_FAIL_CAP, script_fail_reason);
+    TEST_ASSERT_EQUAL_UINT32(SCRIPT_TX_LIMIT, script.tx_count);
+}
+
+void test_Mock_Script_Transmit_Null_Arguments(void) {
+    const uint8_t packet[] = { TEST_DATA_BYTE };
+    sts_bus_t no_port_bus;
+    use_script(NULL, 0U);
+    memcpy(&no_port_bus, &test_bus, sizeof(sts_bus_t));
+    no_port_bus.port_handle = NULL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_tx(NULL, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_tx(&no_port_bus, packet, sizeof(packet)));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_tx(&test_bus, NULL, sizeof(packet)));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+void test_Mock_Script_Receive_Null_Arguments(void) {
+    uint8_t rx[STS_PKT_FIXED_TOTAL];
+    sts_bus_t no_port_bus;
+    use_script(NULL, 0U);
+    memcpy(&no_port_bus, &test_bus, sizeof(sts_bus_t));
+    no_port_bus.port_handle = NULL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_rx(NULL, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_rx(&no_port_bus, rx, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_rx(&test_bus, NULL, sizeof(rx), TEST_TIMEOUT_MS));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
+}
+
+void test_Mock_Script_Flush_Null_Arguments(void) {
+    sts_bus_t no_port_bus;
+    use_script(NULL, 0U);
+    memcpy(&no_port_bus, &test_bus, sizeof(sts_bus_t));
+    no_port_bus.port_handle = NULL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_flush(NULL));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, mock_script_flush(&no_port_bus));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.flush_count);
+}
+
+/* ==========================================================================
+ * BUS SCAN
+ * ========================================================================== */
+
+#define SCAN_FIRST_ID               1U
+#define SCAN_LAST_ID                3U
+#define SCAN_MAX_UNICAST_ID         253U
+#define SCAN_FOUND_SENTINEL         0xAAU
+#define SCAN_FOREIGN_ID             7U
+#define SCAN_RETRIES                2U
+#define SCAN_LOG_MAX                16U
+#define SCAN_REPLY_SLOTS            4U
+#define SCAN_OVERSIZE_LEN_BYTE      0xFEU
+#define SCAN_LEN(a)                 ((uint32_t)(sizeof(a) / sizeof((a)[0])))
+
+#define SCAN_LOST                   {NULL, 0U, STS_OK}
+#define SCAN_REPLY(p, n)            {(p), (n), STS_OK}
+#define SCAN_TX_FAILS(code)         {NULL, 0U, (code)}
+
+typedef struct {
+    uint8_t      id;
+    uint8_t      attempt;
+    sts_result_t result;
+} scan_entry_t;
+
+typedef struct {
+    scan_entry_t entry[SCAN_LOG_MAX];
+    uint32_t     count;
+} scan_log_t;
+
+static scan_log_t scan_log;
+static uint8_t scan_found;
+static uint8_t scan_replies[SCAN_REPLY_SLOTS][EXPECTED_READ8_ACK_LEN];
+
+static void scan_record(uint8_t id, uint8_t attempt, sts_result_t result, void *ctx) {
+    scan_log_t *log = (scan_log_t *)ctx;
+    TEST_ASSERT_TRUE_MESSAGE(log->count < SCAN_LOG_MAX, "Scan callback log full");
+    log->entry[log->count].id      = id;
+    log->entry[log->count].attempt = attempt;
+    log->entry[log->count].result  = result;
+    log->count++;
+}
+
+static void use_scan(const mock_step_t *steps, uint16_t step_count) {
+    use_script(steps, step_count);
+    memset(&scan_log, 0, sizeof(scan_log));
+    scan_found = SCAN_FOUND_SENTINEL;
+}
+
+static sts_result_t run_scan(uint8_t first_id, uint8_t last_id) {
+    return STS_Bus_Scan(&test_bus, first_id, last_id, scan_record, &scan_log, &scan_found);
+}
+
+/* A 6-byte ping reply from id with the given status. */
+static const uint8_t *scan_ack(uint8_t slot, uint8_t id, uint8_t status) {
+    simulate_servo_response(id, status, NULL, PAYLOAD_LEN_NONE, scan_replies[slot]);
+    return scan_replies[slot];
+}
+
+static const uint8_t *scan_bad_checksum(uint8_t slot, uint8_t id) {
+    (void)scan_ack(slot, id, STS_STATUS_OK);
+    scan_replies[slot][EXPECTED_WRITE_ACK_LEN - 1U] ^= CORRUPT_CHECKSUM_MASK;
+    return scan_replies[slot];
+}
+
+static const uint8_t *scan_bad_header(uint8_t slot, uint8_t id) {
+    (void)scan_ack(slot, id, STS_STATUS_OK);
+    scan_replies[slot][0] = CORRUPT_HEADER_BYTE;
+    scan_replies[slot][1] = CORRUPT_HEADER_BYTE;
+    return scan_replies[slot];
+}
+
+/* Seven bytes with length byte 3: a ping expects 6, so the engine reports MALFORMED. */
+static const uint8_t *scan_wrong_length(uint8_t slot, uint8_t id) {
+    const uint8_t param = TEST_DATA_BYTE;
+    simulate_servo_response(id, STS_STATUS_OK, &param, PAYLOAD_LEN_1_BYTE, scan_replies[slot]);
+    return scan_replies[slot];
+}
+
+/* Six bytes with length byte 0xFE: BUF_TOO_SMALL after four bytes, leaving two unread. */
+static const uint8_t *scan_oversize(uint8_t slot, uint8_t id) {
+    (void)scan_ack(slot, id, STS_STATUS_OK);
+    scan_replies[slot][IDX_LENGTH_BYTE] = SCAN_OVERSIZE_LEN_BYTE;
+    return scan_replies[slot];
+}
+
+static void assert_scan(sts_result_t actual, sts_result_t expected, uint8_t expected_found,
+                        const scan_entry_t *log, uint32_t log_count,
+                        const uint8_t *pinged, uint32_t pinged_count, uint32_t flushes) {
+    TEST_ASSERT_EQUAL_INT(expected, actual);
+    TEST_ASSERT_EQUAL_UINT8(expected_found, scan_found);
+
+    TEST_ASSERT_EQUAL_UINT32(log_count, scan_log.count);
+    for (uint32_t i = 0U; i < log_count; i++) {
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(log[i].id, scan_log.entry[i].id, "callback id");
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(log[i].attempt, scan_log.entry[i].attempt, "callback attempt");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(log[i].result, scan_log.entry[i].result, "callback result");
+    }
+
+    TEST_ASSERT_EQUAL_UINT32(pinged_count, script.tx_count);
+    for (uint32_t i = 0U; i < pinged_count; i++) {
+        TEST_ASSERT_EQUAL_UINT16(EXPECTED_WRITE_ACK_LEN, script.tx_log_len[i]);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(pinged[i], script.tx_log[i][STS_IDX_ID], "pinged id");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(EXPECTED_INST_PING, script.tx_log[i][STS_IDX_INSTRUCTION], "instruction");
+    }
+
+    TEST_ASSERT_EQUAL_UINT32(flushes, script.flush_count);
+}
+
+/* Rejected before anything is sent: no traffic, no callback, found_id and the bus untouched. */
+static void assert_scan_rejected(sts_bus_t *bus, uint8_t first_id, uint8_t last_id, uint8_t *found_id,
+                                 sts_result_t expected) {
+    test_bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    test_bus.hard_failures      = TEST_SEED_HARD_FAILURES;
+    sts_bus_t bus_snapshot;
+    memcpy(&bus_snapshot, &test_bus, sizeof(sts_bus_t));
+
+    TEST_ASSERT_EQUAL_INT(expected, STS_Bus_Scan(bus, first_id, last_id, scan_record, &scan_log, found_id));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
+    TEST_ASSERT_EQUAL_UINT32(0U, scan_log.count);
+    TEST_ASSERT_EQUAL_UINT8(SCAN_FOUND_SENTINEL, scan_found);
+    TEST_ASSERT_STRUCT_UNCHANGED(&bus_snapshot, &test_bus, sts_bus_t);
+}
+
+void test_STS_Bus_Scan_Finds_Responding_Servo(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Hardware_Error_Counts_As_Found(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 1U, STS_BIT_ERR_OVERHEAT), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_HARDWARE} };
+    const uint8_t pinged[] = {1U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_All_Silent_Returns_Timeout(void) {
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TIMEOUT}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 2U, 3U};
+    use_scan(NULL, 0U);
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_TIMEOUT, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+/* A transmit fault is final for that ID: no re-ping, and the scan moves on. */
+static void check_transmit_fault_skipped(sts_result_t fault) {
+    const mock_step_t steps[] = { SCAN_TX_FAILS(fault), SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, fault}, {2U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Skips_Transmit_Failure(void) {
+    check_transmit_fault_skipped(STS_ERR_TX_FAIL);
+}
+
+void test_STS_Bus_Scan_Skips_Busy_Transport(void) {
+    check_transmit_fault_skipped(STS_ERR_BUSY);
+}
+
+void test_STS_Bus_Scan_Skips_Transport_Null_Pointer(void) {
+    check_transmit_fault_skipped(STS_ERR_NULL_PTR);
+}
+
+void test_STS_Bus_Scan_Repings_After_Receive_Failure(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_RX_FAIL}, {1U, 1U, STS_ERR_TIMEOUT}, {2U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U, 2U};
+    use_scan(steps, SCAN_LEN(steps));
+    script.rx_fail_call   = 1U;
+    script.rx_fail_result = STS_ERR_RX_FAIL;
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+/* A noise burst on the only servo's first reply: the re-ping finds it. */
+void test_STS_Bus_Scan_Reping_Recovers_Noisy_Reply(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_ack(0U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_RX_FAIL}, {1U, 1U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U};
+    use_scan(steps, SCAN_LEN(steps));
+    script.rx_fail_call   = 1U;
+    script.rx_fail_result = STS_ERR_RX_FAIL;
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+/* A protocol error is re-pinged once after a flush; a lost re-ping moves the scan on. */
+static void check_protocol_error_repinged(const uint8_t *bad_reply, uint16_t bad_len, sts_result_t error,
+                                          uint32_t flushes) {
+    const mock_step_t steps[] = { SCAN_REPLY(bad_reply, bad_len), SCAN_LOST,
+                                  SCAN_REPLY(scan_ack(1U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, error}, {1U, 1U, STS_ERR_TIMEOUT}, {2U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U, 2U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), flushes);
+}
+
+void test_STS_Bus_Scan_Repings_After_Header_Error(void) {
+    check_protocol_error_repinged(scan_bad_header(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_HEADER, 1U);
+}
+
+void test_STS_Bus_Scan_Repings_After_Id_Mismatch(void) {
+    check_protocol_error_repinged(scan_ack(0U, SCAN_FOREIGN_ID, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN,
+                                  STS_ERR_ID_MISMATCH, 1U);
+}
+
+void test_STS_Bus_Scan_Repings_After_Checksum_Error(void) {
+    check_protocol_error_repinged(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_CHECKSUM, 1U);
+}
+
+void test_STS_Bus_Scan_Repings_After_Malformed_Reply(void) {
+    /* The engine flushes on the length mismatch as well, so two flushes. */
+    check_protocol_error_repinged(scan_wrong_length(0U, 1U), EXPECTED_READ8_ACK_LEN, STS_ERR_MALFORMED, 2U);
+}
+
+void test_STS_Bus_Scan_Repings_After_Oversize_Reply(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_oversize(0U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_ack(1U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_BUF_TOO_SMALL}, {1U, 1U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+void test_STS_Bus_Scan_Stops_At_First_Responder(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TIMEOUT}, {3U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U, 3U};
+    const uint8_t ping_1[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, 0x01U, EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xFBU};
+    const uint8_t ping_2[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, 0x02U, EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xFAU};
+    const uint8_t ping_3[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, 0x03U, EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xF9U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 3U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(ping_1, script.tx_log[0], sizeof(ping_1));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(ping_2, script.tx_log[1], sizeof(ping_2));
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(ping_3, script.tx_log[2], sizeof(ping_3));
+}
+
+void test_STS_Bus_Scan_Reping_Recovers_Corrupted_Reply(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_ack(1U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM}, {2U, 1U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U, 2U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    TEST_ASSERT_EQUAL_UINT32(3U, test_bus.total_transactions);
+    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.total_retries);
+    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.retry_saves);
+    TEST_ASSERT_EQUAL_UINT32(2U, test_bus.hard_failures);
+}
+
+void test_STS_Bus_Scan_Moves_On_After_Two_Corrupted_Replies(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_bad_checksum(1U, 2U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_ack(2U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
+                                 {2U, 1U, STS_ERR_CHECKSUM}, {3U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 3U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+void test_STS_Bus_Scan_Moves_On_When_Reping_Is_Lost(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST,
+                                  SCAN_REPLY(scan_ack(1U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
+                                 {2U, 1U, STS_ERR_TIMEOUT}, {3U, 0U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 3U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+void test_STS_Bus_Scan_Miss_Reports_Local_Fault(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_TX_FAILS(STS_ERR_TX_FAIL), SCAN_LOST };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TX_FAIL}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_TX_FAIL, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Miss_Reports_Corrupted_First_Ping(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST, SCAN_LOST };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
+                                 {2U, 1U, STS_ERR_TIMEOUT}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_CHECKSUM, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+void test_STS_Bus_Scan_Miss_Reports_Last_Error(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_bad_checksum(1U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_TX_FAILS(STS_ERR_TX_FAIL), SCAN_LOST };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_CHECKSUM}, {1U, 1U, STS_ERR_CHECKSUM},
+                                 {2U, 0U, STS_ERR_TX_FAIL}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 1U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_TX_FAIL, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+}
+
+void test_STS_Bus_Scan_Without_Callback(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const uint8_t pinged[] = {1U, 2U, 3U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    sts_result_t res = STS_Bus_Scan(&test_bus, SCAN_FIRST_ID, SCAN_LAST_ID, NULL, NULL, &scan_found);
+    assert_scan(res, STS_OK, 3U, NULL, 0U, pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Null_Bus(void) {
+    use_scan(NULL, 0U);
+    assert_scan_rejected(NULL, SCAN_FIRST_ID, SCAN_LAST_ID, &scan_found, STS_ERR_NULL_PTR);
+}
+
+void test_STS_Bus_Scan_Null_Found_Id(void) {
+    use_scan(NULL, 0U);
+    assert_scan_rejected(&test_bus, SCAN_FIRST_ID, SCAN_LAST_ID, NULL, STS_ERR_NULL_PTR);
+}
+
+void test_STS_Bus_Scan_Bus_Without_Transmit(void) {
+    use_scan(NULL, 0U);
+    test_bus.transmit = NULL;
+    assert_scan_rejected(&test_bus, SCAN_FIRST_ID, SCAN_LAST_ID, &scan_found, STS_ERR_INVALID_PARAM);
+}
+
+void test_STS_Bus_Scan_Bus_Without_Receive(void) {
+    use_scan(NULL, 0U);
+    test_bus.receive = NULL;
+    assert_scan_rejected(&test_bus, SCAN_FIRST_ID, SCAN_LAST_ID, &scan_found, STS_ERR_INVALID_PARAM);
+}
+
+void test_STS_Bus_Scan_Reversed_Range(void) {
+    use_scan(NULL, 0U);
+    assert_scan_rejected(&test_bus, SCAN_LAST_ID, SCAN_FIRST_ID, &scan_found, STS_ERR_INVALID_PARAM);
+}
+
+void test_STS_Bus_Scan_Broadcast_Id_Rejected(void) {
+    use_scan(NULL, 0U);
+    assert_scan_rejected(&test_bus, SCAN_FIRST_ID, SCAN_MAX_UNICAST_ID + 1U, &scan_found, STS_ERR_INVALID_PARAM);
+}
+
+void test_STS_Bus_Scan_Last_Id_255_Rejected(void) {
+    use_scan(NULL, 0U);
+    assert_scan_rejected(&test_bus, SCAN_FIRST_ID, UINT8_MAX, &scan_found, STS_ERR_INVALID_PARAM);
+}
+
+void test_STS_Bus_Scan_Single_Id_Range(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 5U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {5U, 0U, STS_OK} };
+    const uint8_t pinged[] = {5U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(5U, 5U), STS_OK, 5U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Includes_Id_Zero(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 0U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {0U, 0U, STS_OK} };
+    const uint8_t pinged[] = {0U};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(0U, 1U), STS_OK, 0U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Reaches_Id_253(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_ack(0U, SCAN_MAX_UNICAST_ID, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {SCAN_MAX_UNICAST_ID - 1U, 0U, STS_ERR_TIMEOUT}, {SCAN_MAX_UNICAST_ID, 0U, STS_OK} };
+    const uint8_t pinged[] = {SCAN_MAX_UNICAST_ID - 1U, SCAN_MAX_UNICAST_ID};
+    use_scan(steps, SCAN_LEN(steps));
+
+    assert_scan(run_scan(SCAN_MAX_UNICAST_ID - 1U, SCAN_MAX_UNICAST_ID), STS_OK, SCAN_MAX_UNICAST_ID,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
+}
+
+void test_STS_Bus_Scan_Uses_Configured_Retries(void) {
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 1U, 1U};
+    use_scan(NULL, 0U);
+    test_bus.max_retries = SCAN_RETRIES;
+
+    /* Engine retries flush before each further attempt. */
+    assert_scan(run_scan(1U, 1U), STS_ERR_TIMEOUT, SCAN_FOUND_SENTINEL, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 2U);
+    TEST_ASSERT_EQUAL_UINT8(SCAN_RETRIES, test_bus.max_retries);
+}
+
+/* --- Retry limit: the scan inherits it from the engine --- */
+
+#define RETRIES_LIMIT_LITERAL       254U
+#define RETRIES_WRAPPING            255U
+
+void test_STS_Max_Retries_255_Rejected_Before_Sending(void) {
+    use_scan(NULL, 0U);
+    test_bus.max_retries        = RETRIES_WRAPPING;
+    test_bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    test_bus.hard_failures      = TEST_SEED_HARD_FAILURES;
+    sts_bus_t bus_snapshot;
+    memcpy(&bus_snapshot, &test_bus, sizeof(sts_bus_t));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_DISABLE));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_STRUCT_UNCHANGED(&bus_snapshot, &test_bus, sts_bus_t);
+}
+
+void test_STS_Max_Retries_254_Makes_255_Attempts(void) {
+    use_scan(NULL, 0U);
+    test_bus.max_retries = RETRIES_LIMIT_LITERAL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_DISABLE));
+    TEST_ASSERT_EQUAL_UINT32(RETRIES_LIMIT_LITERAL + 1U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT32(RETRIES_LIMIT_LITERAL, test_bus.total_retries);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.hard_failures);
+}
+
+/* With 255 retries nothing is sent, so no ID may be reported found. */
+void test_STS_Bus_Scan_Max_Retries_255_Finds_Nothing(void) {
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_INVALID_PARAM}, {2U, 0U, STS_ERR_INVALID_PARAM},
+                                 {3U, 0U, STS_ERR_INVALID_PARAM} };
+    use_scan(NULL, 0U);
+    test_bus.max_retries = RETRIES_WRAPPING;
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_INVALID_PARAM, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), NULL, 0U, 0U);
 }

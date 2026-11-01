@@ -11,7 +11,9 @@
  * packet injection via simulate_servo_response. mock_rx consumes rx_buffer
  * incrementally to support multi-stage reads, and both mock functions track
  * call counts via rx_call_count and tx_call_count for behavioural
- * verification in tests.
+ * verification in tests. The mock_script_* functions provide a scripted
+ * transport: a reply (or none) per transmit, failure injection, flush
+ * counting and a log of every packet sent.
  *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
@@ -120,4 +122,98 @@ void TEST_ASSERT_BUFFER_UNCHANGED(const uint8_t *buffer, size_t size, uint8_t ex
         snprintf(error_msg, sizeof(error_msg), "Buffer corrupted at index %zu", i);
         TEST_ASSERT_EQUAL_HEX8_MESSAGE(expected_fill, buffer[i], error_msg);
     }
+}
+
+void mock_script_default_fail(const char *reason) {
+    TEST_FAIL_MESSAGE(reason);
+}
+
+void mock_script_reset(mock_script_t *script, const mock_step_t *steps, uint16_t step_count) {
+    memset(script, 0, sizeof(*script));
+    script->steps      = steps;
+    script->step_count = step_count;
+    script->on_fail    = mock_script_default_fail;
+}
+
+static sts_result_t mock_script_fail(const mock_script_t *script, const char *reason) {
+    if (script->on_fail != NULL) {
+        script->on_fail(reason);
+    } else {
+        mock_script_default_fail(reason);
+    }
+    return STS_ERR_TX_FAIL;
+}
+
+sts_result_t mock_script_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
+    if (bus == NULL || bus->port_handle == NULL || data == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (len == 0U) return STS_OK;
+
+    mock_script_t *script = (mock_script_t *)bus->port_handle;
+
+    uint32_t cap = (script->tx_cap != 0U && script->tx_cap < MOCK_SCRIPT_TX_MAX) ? script->tx_cap : MOCK_SCRIPT_TX_MAX;
+    if (script->tx_count >= cap) {
+        return mock_script_fail(script, MOCK_SCRIPT_FAIL_CAP);
+    }
+    if (len > MOCK_SCRIPT_PACKET_MAX) {
+        return mock_script_fail(script, MOCK_SCRIPT_FAIL_PACKET);
+    }
+
+    uint32_t index = script->tx_count++;
+    memcpy(script->tx_log[index], data, len);
+    script->tx_log_len[index] = len;
+
+    if (script->discard_on_tx != 0U) {
+        script->queue_len = 0U;
+    }
+    if (index >= script->step_count) {
+        return STS_OK;
+    }
+
+    const mock_step_t *step = &script->steps[index];
+    if (step->tx_result != STS_OK) {
+        return step->tx_result;
+    }
+    if (step->reply != NULL) {
+        if ((uint32_t)script->queue_len + step->reply_len > sizeof(script->queue)) {
+            return mock_script_fail(script, MOCK_SCRIPT_FAIL_QUEUE);
+        }
+        memcpy(&script->queue[script->queue_len], step->reply, step->reply_len);
+        script->queue_len = (uint16_t)(script->queue_len + step->reply_len);
+    }
+    return STS_OK;
+}
+
+sts_result_t mock_script_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
+    (void)timeout_ms;
+    if (bus == NULL || bus->port_handle == NULL || data == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (len == 0U) return STS_OK;
+
+    mock_script_t *script = (mock_script_t *)bus->port_handle;
+    script->rx_count++;
+
+    if (script->rx_fail_call != 0U && script->rx_count == script->rx_fail_call) {
+        return script->rx_fail_result;
+    }
+    if (script->queue_len < len) {
+        return STS_ERR_TIMEOUT;
+    }
+
+    memcpy(data, script->queue, len);
+    script->queue_len = (uint16_t)(script->queue_len - len);
+    memmove(script->queue, &script->queue[len], script->queue_len);
+    return STS_OK;
+}
+
+sts_result_t mock_script_flush(sts_bus_t *bus) {
+    if (bus == NULL || bus->port_handle == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    mock_script_t *script = (mock_script_t *)bus->port_handle;
+    script->flush_count++;
+    script->queue_len = 0U;
+    return STS_OK;
 }

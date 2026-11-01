@@ -43,7 +43,7 @@ The bus tracks `total_transactions`, `total_retries`, `retry_saves`, and `hard_f
 `0x00` is not a valid STS instruction byte. The status byte in servo responses uses `0x00` to indicate no hardware error, so it has a different semantic role than a command instruction. Allowing it in `sts_create_packet` would let a caller build a packet that is structurally a response rather than a command. Response construction for testing is handled by the `simulate_servo_response` helper in `test_sts_utils.c`.
 
 **Why a sliding-window seeker rather than a strict header check?**
-A half-duplex bus can present the receiver with echo, collision fragments, or noise before the real response. The parser scans for the `0xFF 0xFF` sync pair, validates the candidate packet at that offset, and advances by one byte on failure rather than discarding the buffer. A false header inside noise therefore costs one byte of progress instead of the whole response.
+A half-duplex bus can present the receiver with collision fragments or noise before the real response. The parser scans for the `0xFF 0xFF` sync pair, validates the candidate packet at that offset, and advances by one byte on failure rather than discarding the buffer. A false header inside noise therefore costs one byte of progress instead of the whole response. It does not filter a local echo: an echoed ping or read is itself a valid packet, so keeping echo out is the transport's job (see the porting guide).
 
 ## Operating modes and target dispatch
 

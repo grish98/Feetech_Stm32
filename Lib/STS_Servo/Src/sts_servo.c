@@ -98,6 +98,11 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
         return STS_ERR_NULL_PTR;
     }
 
+    /* max_retries + 1 must fit the 8-bit attempt count; 255 would wrap to 0 attempts. */
+    if (servo->bus->max_retries > STS_MAX_RETRIES) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
     uint8_t *tx_buf = servo->bus->tx_buf;
     uint8_t *rx_buf = servo->bus->rx_buf;
 
@@ -242,6 +247,54 @@ sts_result_t STS_servo_ping(sts_servo_t *servo) {
         servo->is_online = STS_OFFLINE;
     }
     return res;
+}
+
+/* Corrupted, short or noisy reply rather than silence: worth one more ping. */
+static uint8_t sts_scan_worth_reping(sts_result_t res) {
+    return (res == STS_ERR_HEADER   || res == STS_ERR_ID_MISMATCH || res == STS_ERR_CHECKSUM ||
+            res == STS_ERR_MALFORMED || res == STS_ERR_BUF_TOO_SMALL || res == STS_ERR_RX_FAIL) ? 1U : 0U;
+}
+
+sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
+                          sts_scan_cb_t on_ping, void *ctx, uint8_t *found_id) {
+    if (bus == NULL || found_id == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (bus->transmit == NULL || bus->receive == NULL || first_id > last_id || last_id >= STS_MAX_ID) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    const uint8_t pings_per_id = 2U;
+    sts_result_t  miss = STS_ERR_TIMEOUT;
+    sts_servo_t   probe;
+
+    /* uint16_t so the loop cannot wrap at the top of the ID range. */
+    for (uint16_t id = first_id; id <= last_id; id++) {
+        (void)STS_Servo_Init(&probe, bus, (uint8_t)id);
+
+        for (uint8_t attempt = 0U; attempt < pings_per_id; attempt++) {
+            if (attempt > 0U) {
+                (void)STS_Bus_FlushRx(bus);
+            }
+
+            sts_result_t res = STS_servo_ping(&probe);
+            if (on_ping != NULL) {
+                on_ping((uint8_t)id, attempt, res, ctx);
+            }
+
+            if (res == STS_OK || res == STS_ERR_HARDWARE) {
+                *found_id = (uint8_t)id;
+                return STS_OK;
+            }
+            if (res != STS_ERR_TIMEOUT) {
+                miss = res;
+            }
+            if (sts_scan_worth_reping(res) == 0U) {
+                break;
+            }
+        }
+    }
+    return miss;
 }
 
 /* ==========================================================================

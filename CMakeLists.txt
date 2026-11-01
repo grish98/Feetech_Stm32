@@ -63,6 +63,12 @@ set(TEST_RING_BUFFER_SOURCES
     Lib/STS_Servo/Src/sts_ring_buffer.c
 )
 
+set(TEST_SCRIPT_FAIL_SOURCES
+    Tests/test_runner_script_fail.c
+    Tests/test_sts_utils.c
+    Tests/Unity/unity.c
+)
+
 # Detect if we are using the ARM Toolchain or Native (Windows)
 if(CMAKE_C_COMPILER MATCHES "arm-none-eabi")
     set(IS_ARM_BUILD TRUE)
@@ -131,6 +137,20 @@ else()
         Tests/Unity
     )
     add_test(NAME RingBufferTests COMMAND test_ring_buffer)
+
+    # ---  Scripted Transport Failure Check: both tests must fail through the default handler ---
+    add_executable(test_script_fail ${TEST_SCRIPT_FAIL_SOURCES} ${DRIVER_SOURCES})
+    target_include_directories(test_script_fail PRIVATE
+        Lib/STS_Servo/Inc
+        Tests
+        Tests/Unity
+    )
+    add_test(NAME ScriptFailTests COMMAND test_script_fail)
+    set_tests_properties(ScriptFailTests PROPERTIES PASS_REGULAR_EXPRESSION
+        "test_Default_Handler_Fails_The_Test:FAIL[^\r\n]*transmit cap exceeded.*test_Null_Hook_Falls_Back_To_Default_Handler:FAIL[^\r\n]*transmit cap exceeded.*-[\r\n]+2 Tests 2 Failures 0 Ignored")
+
+    # A hung test fails the run instead of stalling it; each suite takes well under a second.
+    set_tests_properties(ProtocolTests ServoTests RingBufferTests ScriptFailTests PROPERTIES TIMEOUT 10)
 
     # --- Doxygen Section ---
     find_package(Doxygen)
