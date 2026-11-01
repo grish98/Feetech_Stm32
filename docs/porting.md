@@ -16,6 +16,8 @@ typedef sts_result_t (*sts_hal_flush_rx_t)(sts_bus_t *bus);
 
 Every callback receives the bus handle, so platform state is reached through `bus->port_handle` rather than through globals. The core never dereferences `port_handle`; it is opaque and may be `NULL` if your transport does not need one.
 
+`receive` must never return the bytes `transmit` just sent. An echoed ping is itself a valid packet, so the engine would read it as a reply from a servo reporting a hardware fault. A half-duplex port whose transmitter disables the receiver cannot echo; a full-duplex adapter can. To check a port, ping an ID with no servo connected: a conforming port returns `STS_ERR_TIMEOUT`, an echoing one returns `STS_ERR_HARDWARE`.
+
 ### Wiring it up
 
 `STS_Bus_Init` accepts only the two required callbacks. `flush_rx` and `max_retries` are assigned directly afterwards, because `STS_Bus_Init` zeroes the whole handle first:
@@ -28,7 +30,7 @@ bus.flush_rx    = MyPort_FlushRx;  /* optional */
 bus.max_retries = 2U;              /* 0 = one attempt, no retries */
 ```
 
-Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it.
+Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it. `max_retries` accepts 0 to `STS_MAX_RETRIES` (254); with 255 every transaction returns `STS_ERR_INVALID_PARAM` and sends nothing.
 
 ## Timing hooks
 
@@ -136,5 +138,5 @@ The STM32 port additionally keeps its UART state in file-scope statics, so it su
 3. **Implement `flush_rx`** if your peripheral latches error flags that survive an aborted read. It is called before each retry.
 4. **Wire up the bus** as shown above, with `max_retries = 0` initially so failures surface immediately rather than being masked by retries.
 5. **Ping a known ID.** `STS_servo_ping` is the smallest complete transaction: it exercises framing, transmit, both receive stages, and parsing. Treat only `STS_OK` or `STS_ERR_HARDWARE` as a confirmed response from that servo; `STS_ERR_HARDWARE` still counts, because the servo answered and merely reported an internal fault.
-6. **Scan for the servo** if the ID is unknown, pinging each candidate and accepting the same two results. Do not treat "anything other than `STS_ERR_TIMEOUT`" as a hit: `STS_ERR_TX_FAIL`, `STS_ERR_RX_FAIL`, and `STS_ERR_NULL_PTR` are local faults that say nothing about whether a servo is present. A checksum, header, or ID error is weaker evidence again; it shows bytes arrived, but not that they came from the ID you asked for, so it is worth logging separately during bring-up rather than counting as a match. Note that the scan in `App/Src/app_main.c` currently uses the looser non-timeout test.
+6. **Scan for the servo** with `STS_Bus_Scan` if the ID is unknown. It pings each ID in a range and stops at the first `STS_OK` or `STS_ERR_HARDWARE`. A header, ID, checksum, length or buffer-size error shows that bytes arrived but not a valid reply from that ID, so the scan flushes and pings that ID once more before moving on. `STS_ERR_RX_FAIL` gets the same second ping, because on the STM32 port it also means a short or noise-corrupted arrival. `STS_ERR_TX_FAIL`, `STS_ERR_BUSY` and `STS_ERR_NULL_PTR` never count as a hit and are not re-pinged. Keep `max_retries` at 0 while scanning, since every absent ID costs one receive timeout per attempt, and log each ping through the callback during bring-up.
 7. **Run the integration suite** (`STS_RunIntegrationTests`) once single transactions work, then a stress campaign. Note that the suite currently calls the STM32 HAL for its timing, so reusing it on another MCU means substituting those calls first. Watch `total_retries` and `hard_failures` rather than only the pass and fail counts: a port that works but retries constantly is a port with a marginal turnaround.

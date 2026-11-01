@@ -43,7 +43,7 @@ The bus tracks `total_transactions`, `total_retries`, `retry_saves`, and `hard_f
 `0x00` is not a valid STS instruction byte. The status byte in servo responses uses `0x00` to indicate no hardware error, so it has a different semantic role than a command instruction. Allowing it in `sts_create_packet` would let a caller build a packet that is structurally a response rather than a command. Response construction for testing is handled by the `simulate_servo_response` helper in `test_sts_utils.c`.
 
 **Why a sliding-window seeker rather than a strict header check?**
-A half-duplex bus can present the receiver with echo, collision fragments, or noise before the real response. The parser scans for the `0xFF 0xFF` sync pair, validates the candidate packet at that offset, and advances by one byte on failure rather than discarding the buffer. A false header inside noise therefore costs one byte of progress instead of the whole response.
+A half-duplex bus can present the receiver with collision fragments or noise before the real response. The parser scans for the `0xFF 0xFF` sync pair, validates the candidate packet at that offset, and advances by one byte on failure rather than discarding the buffer. A false header inside noise therefore costs one byte of progress instead of the whole response. It does not filter a local echo: an echoed ping or read is itself a valid packet, so keeping echo out is the transport's job (see the porting guide).
 
 ## Operating modes and target dispatch
 
@@ -61,8 +61,8 @@ Direction for speed, PWM, and step modes is supplied explicitly through the `dir
 **Why does `STS_SetTarget` use the sign of its argument to encode direction?**
 `STS_SetTarget` is a convenience dispatcher that routes to the correct command for the servo's current mode, so it needs one argument type that can express every mode's target. Speed, PWM, and step all need a direction; position does not. Taking a signed `int32_t` and reading the sign as direction gives a single uniform call for all four modes.
 
-**Why does `STS_SetTarget` clamp negative position values to zero instead of rejecting them?**
-In position mode a negative target is clamped to zero, because position has no direction semantics and zero is always a valid, safe position. Rejecting it would turn what is most likely an off-by-one in the caller's coordinate maths into a hard error. Applications that require strict range validation can call `STS_SetTargetPosition` directly, which enforces the full range.
+**Why does `STS_SetTarget` reject out-of-range targets instead of clamping them?**
+A target outside the active mode's range returns `STS_ERR_INVALID_PARAM` and nothing is sent. This covers targets above the mode's maximum, of any size, and negative targets in position mode. Clamping would return `STS_OK` for a command that was not carried out as requested: in step mode a relative move would be silently shortened, and in speed mode a miscalculated target would become full speed. A caller on production equipment needs to learn that its target was wrong, so the wrapper applies the same rule as `STS_SetTargetPosition`, `STS_SetTargetSpeed`, `STS_SetTargetPWM` and `STS_SetTargetStep`. Before narrowing to the 16-bit register value, the wrapper rejects any magnitude above `UINT16_MAX`, so a large target cannot wrap into a valid one; each per-mode function then enforces its own, smaller limit.
 
 ## Configuration
 

@@ -31,6 +31,7 @@
 #define STS_MAX_TX_BUFFER       128U
 #define STS_MAX_RX_BUFFER       128U
 #define STS_DEFAULT_TIMEOUT_MS  10U
+#define STS_MAX_RETRIES         254U  /**< Largest accepted max_retries; larger values are rejected */
 
 
 
@@ -54,7 +55,7 @@ struct sts_bus_s {
     sts_hal_receive_t receive;      /**< Injected RX function */
     sts_hal_flush_rx_t flush_rx;    /**<  drain stale RX bytes between retries. NULL = no-op. */
 
-    uint8_t max_retries;            /**< Transaction retry count on transport error (0 = no retries) */
+    uint8_t max_retries;            /**< Transaction retry count on transport error (0 = no retries, up to STS_MAX_RETRIES; above that every call returns STS_ERR_INVALID_PARAM) */
 
     /* Error counters — never reset automatically; read via snapshot deltas.
      * Analogous to CAN TEC/REC: tolerance without counters is blindness. */
@@ -121,6 +122,33 @@ sts_result_t STS_Bus_FlushRx(sts_bus_t *bus);
 * On success, the servo's is_online field is set to STS_ONLINE; on failure, it is set to STS_OFFLINE.
  */
 sts_result_t STS_servo_ping(sts_servo_t *servo);
+
+/**
+ * @brief Called by STS_Bus_Scan after every ping.
+ * @param id      The ID just pinged.
+ * @param attempt 0 for the first ping of an ID, 1 for the re-ping after a protocol error.
+ * @param result  That ping's result.
+ * @param ctx     The caller's context pointer, passed through unchanged.
+ */
+typedef void (*sts_scan_cb_t)(uint8_t id, uint8_t attempt, sts_result_t result, void *ctx);
+
+/**
+ * @brief Pings IDs first_id to last_id in order and stops at the first servo that answers.
+ * @note  A reply counts when the ping returns STS_OK or STS_ERR_HARDWARE. After a header, ID,
+ *        checksum, length, buffer-size or receive error the bus is flushed and the same ID is
+ *        pinged once more. Each ping uses the bus's max_retries; 0 keeps a scan of absent IDs short.
+ * @param bus      Initialised bus handle.
+ * @param first_id First ID to ping (0 to 253).
+ * @param last_id  Last ID to ping (first_id to 253).
+ * @param on_ping  Optional callback after every ping; NULL for none.
+ * @param ctx      Passed to on_ping.
+ * @param[out] found_id The answering ID; written only when STS_OK is returned.
+ * @return STS_OK if a servo answered; STS_ERR_TIMEOUT if every ping timed out; otherwise the last
+ *         non-timeout ping result. STS_ERR_NULL_PTR or STS_ERR_INVALID_PARAM for bad arguments,
+ *         with nothing sent.
+ */
+sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
+                          sts_scan_cb_t on_ping, void *ctx, uint8_t *found_id);
 
 
 /* ==========================================================================

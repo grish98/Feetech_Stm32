@@ -109,10 +109,14 @@ sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration)
 
 /**
  * @brief Universal target wrapper that routes the command based on current mode.
- * @note In Position mode, negative targets are automatically clamped to 0.
+ * @note In Speed, PWM and Step modes the sign gives the direction (negative = CW) and the
+ *       magnitude must not exceed STS_MAX_SPEED, STS_MAX_PWM or STS_MAX_STEP. In Position mode
+ *       the target must be 0 to STS_MAX_POSITION. Out-of-range targets are rejected, never
+ *       clamped or wrapped, and nothing is sent.
  * @param servo Pointer to an initialized servo handle.
  * @param target The desired target value. Bounds depend on active mode.
- * @return sts_result_t STS_OK on success, or specific error code.
+ * @return sts_result_t STS_OK on success, STS_ERR_INVALID_PARAM if the target is out of range
+ *         for the active mode or the mode is invalid, or the transaction's error code.
  */
 sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target);
 

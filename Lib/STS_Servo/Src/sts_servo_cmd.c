@@ -134,14 +134,21 @@ sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
     }
 
     sts_direction_t dir = (target < 0) ? STS_DIR_CW : STS_DIR_CCW;
-    uint32_t magnitude  = (uint32_t)((target < 0) ? -target : target);
+    /* Negate in unsigned arithmetic: -target overflows for INT32_MIN. */
+    uint32_t magnitude  = (target < 0) ? (0U - (uint32_t)target) : (uint32_t)target;
+
+    /* Reject before the uint16_t casts below, which would wrap modulo 65536.
+     * Each per-mode function checks its own, smaller range. */
+    if (magnitude > UINT16_MAX) {
+        return STS_ERR_INVALID_PARAM;
+    }
 
     switch (servo->current_mode) {
         case STS_MODE_POSITION:
             if (target < 0) {
-                target = 0;
+                return STS_ERR_INVALID_PARAM;
             }
-            return STS_SetTargetPosition(servo, (uint16_t)target);
+            return STS_SetTargetPosition(servo, (uint16_t)magnitude);
 
         case STS_MODE_SPEED:
             return STS_SetTargetSpeed(servo, (uint16_t)magnitude, dir);
