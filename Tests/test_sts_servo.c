@@ -46,6 +46,8 @@
 #include "sts_servo_cmd.h"
 #include "sts_servo_internal.h"
 #include <string.h>
+#include <stddef.h>
+#include <stdio.h>
 
 /* ==========================================================================
  * TEST ENVIRONMENT & BUFFER LIMITS
@@ -804,8 +806,17 @@ void test_STS_ExecuteCommand_RX_Buffer_Overflow(void) {
         .rx_params_size   = 0U,
         .rx_param_len_out = NULL
     };
+    test_bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    test_bus.total_retries      = TEST_SEED_RETRIES;
+    test_bus.retry_saves        = TEST_SEED_RETRY_SAVES;
+    test_bus.hard_failures      = TEST_SEED_HARD_FAILURES;
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, sts_execute_command(&test_servo, &cmd));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, sts_execute_command(&test_servo, &cmd));
+    TEST_ASSERT_EQUAL_UINT32(EXACTLY_ONE_CALL, dummy_uart_port.tx_call_count);
+    TEST_ASSERT_EQUAL_UINT32(TEST_SEED_TRANSACTIONS + 1U, test_bus.total_transactions);
+    TEST_ASSERT_EQUAL_UINT32(TEST_SEED_RETRIES, test_bus.total_retries);
+    TEST_ASSERT_EQUAL_UINT32(TEST_SEED_RETRY_SAVES, test_bus.retry_saves);
+    TEST_ASSERT_EQUAL_UINT32(TEST_SEED_HARD_FAILURES + 1U, test_bus.hard_failures);
 }
 
 
@@ -1181,7 +1192,9 @@ uint8_t pos_data[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
     uint16_t pos = 0U;
     sts_result_t res = STS_GetPresentPosition(&test_servo, &pos);
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, res);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, res);
+    TEST_ASSERT_EQUAL_UINT16(0U, pos);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.hard_failures);
 }
 
 void test_STS_GetPresentPosition_Wrong_ID_Response(void) {
@@ -2822,7 +2835,7 @@ static const uint8_t *scan_wrong_length(uint8_t slot, uint8_t id) {
     return scan_replies[slot];
 }
 
-/* Six bytes with length byte 0xFE: BUF_TOO_SMALL after four bytes, leaving two unread. */
+/* Six bytes with length byte 0xFE: malformed after four bytes; the engine flushes the other two. */
 static const uint8_t *scan_oversize(uint8_t slot, uint8_t id) {
     (void)scan_ack(slot, id, STS_STATUS_OK);
     scan_replies[slot][IDX_LENGTH_BYTE] = SCAN_OVERSIZE_LEN_BYTE;
@@ -2917,6 +2930,10 @@ void test_STS_Bus_Scan_Skips_Transport_Null_Pointer(void) {
     check_transmit_fault_skipped(STS_ERR_NULL_PTR);
 }
 
+void test_STS_Bus_Scan_Skips_Buffer_Size_Error(void) {
+    check_transmit_fault_skipped(STS_ERR_BUF_TOO_SMALL);
+}
+
 void test_STS_Bus_Scan_Repings_After_Receive_Failure(void) {
     const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
     const scan_entry_t log[] = { {1U, 0U, STS_ERR_RX_FAIL}, {1U, 1U, STS_ERR_TIMEOUT}, {2U, 0U, STS_OK} };
@@ -2973,11 +2990,12 @@ void test_STS_Bus_Scan_Repings_After_Malformed_Reply(void) {
 void test_STS_Bus_Scan_Repings_After_Oversize_Reply(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_oversize(0U, 1U), EXPECTED_WRITE_ACK_LEN),
                                   SCAN_REPLY(scan_ack(1U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_BUF_TOO_SMALL}, {1U, 1U, STS_OK} };
+    const scan_entry_t log[] = { {1U, 0U, STS_ERR_MALFORMED}, {1U, 1U, STS_OK} };
     const uint8_t pinged[] = {1U, 1U};
     use_scan(steps, SCAN_LEN(steps));
 
-    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    /* The engine flushes the malformed reply, then the scan flushes before the re-ping. */
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 2U);
 }
 
 void test_STS_Bus_Scan_Stops_At_First_Responder(void) {
@@ -3188,4 +3206,283 @@ void test_STS_Bus_Scan_Max_Retries_255_Finds_Nothing(void) {
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_INVALID_PARAM, SCAN_FOUND_SENTINEL,
                 log, SCAN_LEN(log), NULL, 0U, 0U);
+}
+
+/* ==========================================================================
+ * REPLY LENGTH CHECK
+ * ========================================================================== */
+
+#define LEN_RETRIES                 2U
+#define LEN_HEADER_SIZE             4U        /* FF FF, ID, length byte */
+#define LEN_READ16_BYTE             4U        /* Length byte of a READ16 reply */
+#define LEN_LARGEST_FITTING         124U      /* 4 + 124 fills the 128-byte rx_buf */
+#define LEN_SMALLEST_OVERSIZE       125U
+#define LEN_LARGEST_BYTE            255U
+#define LEN_OVERSIZE_BYTE           0xFEU
+#define LEN_MISMATCH_BYTE           5U
+#define LEN_BODY_MAX                252U      /* Header plus body fill the 256-byte queue */
+#define LEN_PATTERN_BYTE            0x5AU
+#define LEN_GUARD_BYTE              0xC3U
+#define LEN_GUARD_SIZE              16U
+#define LEN_POSITION_VALUE          0x0800U
+#define LEN_POSITION_SENTINEL       0xBEEFU
+#define LEN_FULL_REPLY              128U      /* Longest reply rx_buf holds */
+#define LEN_FULL_PARAMS             (LEN_FULL_REPLY - EXPECTED_WRITE_ACK_LEN)
+#define LEN_EXPECTED_PAST_BUFFER    (LEN_FULL_REPLY + 1U)
+#define LEN_EXPECTED_BELOW_REPLY    (EXPECTED_WRITE_ACK_LEN - 1U)
+
+/* READ16 of present position (0x38) from ID 10. */
+static const uint8_t len_read_position[] = {0xFFU, 0xFFU, 0x0AU, 0x04U, 0x02U, 0x38U, 0x02U, 0xB5U};
+/* WRITE8 of 1 to torque enable (0x28), broadcast. */
+static const uint8_t len_broadcast_torque_on[] = {0xFFU, 0xFFU, 0xFEU, 0x04U, 0x03U, 0x28U, 0x01U, 0xD1U};
+
+typedef struct {
+    sts_bus_t bus;
+    uint8_t   guard[LEN_GUARD_SIZE];
+} len_guarded_bus_t;
+
+typedef struct {
+    uint32_t transactions;
+    uint32_t retries;
+    uint32_t saves;
+    uint32_t hard;
+} len_counters_t;
+
+static len_guarded_bus_t len_bus;
+static sts_servo_t       len_servo;
+static uint8_t           len_valid[EXPECTED_READ16_ACK_LEN];
+static uint8_t           len_oversize[EXPECTED_READ16_ACK_LEN];
+static uint8_t           len_mismatch[EXPECTED_READ16_ACK_LEN];
+static uint8_t           len_reply[MOCK_SCRIPT_QUEUE_SIZE];
+
+/* Guarded bus on the scripted transport, counters seeded, position replies rebuilt. */
+static void use_len_bus(const mock_step_t *steps, uint16_t step_count, uint8_t max_retries) {
+    const uint8_t pos[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos, STS_DATA_LEN_16BIT, len_valid);
+    memcpy(len_oversize, len_valid, sizeof(len_valid));
+    len_oversize[IDX_LENGTH_BYTE] = LEN_OVERSIZE_BYTE;
+    memcpy(len_mismatch, len_valid, sizeof(len_valid));
+    len_mismatch[IDX_LENGTH_BYTE] = LEN_MISMATCH_BYTE;
+
+    mock_script_reset(&script, steps, step_count);
+    (void)STS_Bus_Init(&len_bus.bus, &script, mock_script_tx, mock_script_rx);
+    len_bus.bus.flush_rx           = mock_script_flush;
+    len_bus.bus.max_retries        = max_retries;
+    len_bus.bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    len_bus.bus.total_retries      = TEST_SEED_RETRIES;
+    len_bus.bus.retry_saves        = TEST_SEED_RETRY_SAVES;
+    len_bus.bus.hard_failures      = TEST_SEED_HARD_FAILURES;
+    memset(len_bus.guard, LEN_GUARD_BYTE, sizeof(len_bus.guard));
+    (void)STS_Servo_Init(&len_servo, &len_bus.bus, TEST_VALID_ID);
+}
+
+/* Header from ID 10 with length byte n, then min(n, LEN_BODY_MAX) pattern bytes; returns the size. */
+static uint16_t len_build_raw(uint16_t n) {
+    uint16_t body = (n < LEN_BODY_MAX) ? n : LEN_BODY_MAX;
+    len_reply[0] = EXPECTED_HEADER_BYTE;
+    len_reply[1] = EXPECTED_HEADER_BYTE;
+    len_reply[2] = TEST_VALID_ID;
+    len_reply[IDX_LENGTH_BYTE] = (uint8_t)n;
+    memset(&len_reply[LEN_HEADER_SIZE], LEN_PATTERN_BYTE, body);
+    return (uint16_t)(LEN_HEADER_SIZE + body);
+}
+
+/* Nothing written past rx_buf: tail padding still zero, guard still intact. */
+static void assert_rx_buf_contained(const char *msg) {
+    const uint8_t *raw = (const uint8_t *)&len_bus.bus;
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)sizeof(sts_bus_t), (uint32_t)offsetof(len_guarded_bus_t, guard));
+    for (size_t i = offsetof(sts_bus_t, rx_buf) + STS_MAX_RX_BUFFER; i < sizeof(sts_bus_t); i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0U, raw[i], msg);
+    }
+    for (uint32_t i = 0U; i < LEN_GUARD_SIZE; i++) {
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(LEN_GUARD_BYTE, len_bus.guard[i], msg);
+    }
+}
+
+/* Transmits (each equal to packet, unless NULL), flushes, counter deltas from the seeds, rx_buf contained. */
+static void assert_len_outcome(const uint8_t *packet, uint16_t packet_len, uint32_t tx, uint32_t flushes,
+                               len_counters_t delta, const char *msg) {
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(tx, script.tx_count, msg);
+    for (uint32_t i = 0U; (packet != NULL) && (i < tx); i++) {
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(packet_len, script.tx_log_len[i], msg);
+        TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(packet, script.tx_log[i], packet_len, msg);
+    }
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(flushes, script.flush_count, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(TEST_SEED_TRANSACTIONS + delta.transactions, len_bus.bus.total_transactions, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(TEST_SEED_RETRIES + delta.retries, len_bus.bus.total_retries, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(TEST_SEED_RETRY_SAVES + delta.saves, len_bus.bus.retry_saves, msg);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(TEST_SEED_HARD_FAILURES + delta.hard, len_bus.bus.hard_failures, msg);
+    assert_rx_buf_contained(msg);
+}
+
+/* One position read whose reply carries length byte n, with no retries. */
+static void check_length_byte(uint16_t n) {
+    char msg[24];
+    (void)snprintf(msg, sizeof(msg), "length byte %u", (unsigned)n);
+    const uint8_t *reply = len_valid;
+    uint16_t reply_len   = EXPECTED_READ16_ACK_LEN;
+    if (n != LEN_READ16_BYTE) {
+        reply_len = len_build_raw(n);
+        reply     = len_reply;
+    }
+    const mock_step_t steps[] = { {reply, reply_len, STS_OK} };
+    use_len_bus(steps, 1U, 0U);
+    uint16_t pos = LEN_POSITION_SENTINEL;
+
+    sts_result_t res = STS_GetPresentPosition(&len_servo, &pos);
+
+    if (n == LEN_READ16_BYTE) {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_OK, res, msg);
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(LEN_POSITION_VALUE, pos, msg);
+        assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, msg);
+    } else {
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_ERR_MALFORMED, res, msg);
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(LEN_POSITION_SENTINEL, pos, msg);
+        assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, msg);
+    }
+}
+
+void test_STS_Reply_Length_Within_Buffer_Only_Exact_Accepted(void) {
+    for (uint16_t n = 0U; n <= LEN_LARGEST_FITTING; n++) {
+        check_length_byte(n);
+    }
+}
+
+void test_STS_Reply_Length_Past_Buffer_Is_Malformed(void) {
+    for (uint16_t n = LEN_SMALLEST_OVERSIZE; n <= LEN_LARGEST_BYTE; n++) {
+        check_length_byte(n);
+    }
+}
+
+void test_STS_Oversize_Length_Retried_Then_Valid(void) {
+    const mock_step_t steps[] = { {len_oversize, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_len_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos = LEN_POSITION_SENTINEL;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentPosition(&len_servo, &pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 2U, 2U, (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+}
+
+void test_STS_Oversize_Length_Every_Attempt_Hard_Failure(void) {
+    const mock_step_t steps[] = { {len_oversize, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_oversize, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_oversize, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_len_bus(steps, 3U, LEN_RETRIES);
+    uint16_t pos = LEN_POSITION_SENTINEL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, STS_GetPresentPosition(&len_servo, &pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_SENTINEL, pos);
+    /* One flush per malformed reply, one before each retry. */
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 3U, 5U, (len_counters_t){1U, 2U, 0U, 1U}, NULL);
+}
+
+void test_STS_Lost_Then_Oversize_Then_Valid(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK},
+                                  {len_oversize, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_len_bus(steps, 3U, LEN_RETRIES);
+    uint16_t pos = LEN_POSITION_SENTINEL;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentPosition(&len_servo, &pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 3U, 3U, (len_counters_t){1U, 2U, 1U, 0U}, NULL);
+}
+
+void test_STS_Length_Mismatch_Retried_Then_Valid(void) {
+    const mock_step_t steps[] = { {len_mismatch, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_len_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos = LEN_POSITION_SENTINEL;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_GetPresentPosition(&len_servo, &pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 2U, 2U, (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+}
+
+/* Reply length agrees with the caller but exceeds rx_buf: malformed, stage 2 never read. */
+void test_STS_ExecuteCommand_Expected_Length_Past_Buffer_Is_Malformed(void) {
+    const mock_step_t steps[] = { {len_reply, len_build_raw(LEN_SMALLEST_OVERSIZE), STS_OK} };
+    use_len_bus(steps, 1U, 0U);
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_READ,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = LEN_EXPECTED_PAST_BUFFER,
+        .rx_params_out    = NULL,
+        .rx_params_size   = 0U,
+        .rx_param_len_out = NULL
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, sts_execute_command(&len_servo, &cmd));
+    TEST_ASSERT_EQUAL_UINT32(1U, script.rx_count);
+    assert_len_outcome(NULL, 0U, 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_ExecuteCommand_Reply_Filling_Buffer_Accepted(void) {
+    uint8_t params[LEN_FULL_PARAMS];
+    for (uint16_t i = 0U; i < LEN_FULL_PARAMS; i++) {
+        params[i] = (uint8_t)(i + 1U);
+    }
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, params, LEN_FULL_PARAMS, len_reply);
+    const mock_step_t steps[] = { {len_reply, LEN_FULL_REPLY, STS_OK} };
+    use_len_bus(steps, 1U, 0U);
+    uint8_t out[LEN_FULL_PARAMS] = {0};
+    uint16_t out_len = 0U;
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_READ,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = LEN_FULL_REPLY,
+        .rx_params_out    = out,
+        .rx_params_size   = LEN_FULL_PARAMS,
+        .rx_param_len_out = &out_len
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, sts_execute_command(&len_servo, &cmd));
+    TEST_ASSERT_EQUAL_UINT16(LEN_FULL_PARAMS, out_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(params, out, LEN_FULL_PARAMS);
+    assert_len_outcome(NULL, 0U, 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+void test_STS_ExecuteCommand_Expected_Length_Below_Any_Reply(void) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, len_reply);
+    const mock_step_t steps[] = { {len_reply, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_len_bus(steps, 1U, 0U);
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_READ,
+        .tx_params        = NULL,
+        .tx_param_len     = 0U,
+        .expected_rx_len  = LEN_EXPECTED_BELOW_REPLY,
+        .rx_params_out    = NULL,
+        .rx_params_size   = 0U,
+        .rx_param_len_out = NULL
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, sts_execute_command(&len_servo, &cmd));
+    assert_len_outcome(NULL, 0U, 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* No reply expected: a transmit that succeeds on a retry counts as a retry save. */
+void test_STS_Broadcast_Write_Retry_Save_Counted(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_TX_FAIL}, {NULL, 0U, STS_OK} };
+    use_len_bus(steps, 2U, LEN_RETRIES);
+    len_servo.id = STS_ID_BROADCAST_SYNC;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8(&len_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
+    assert_len_outcome(len_broadcast_torque_on, sizeof(len_broadcast_torque_on), 2U, 1U,
+                       (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+}
+
+void test_STS_Broadcast_Write_First_Attempt_No_Save(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK} };
+    use_len_bus(steps, 1U, LEN_RETRIES);
+    len_servo.id = STS_ID_BROADCAST_SYNC;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8(&len_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
+    assert_len_outcome(len_broadcast_torque_on, sizeof(len_broadcast_torque_on), 1U, 0U,
+                       (len_counters_t){1U, 0U, 0U, 0U}, NULL);
 }

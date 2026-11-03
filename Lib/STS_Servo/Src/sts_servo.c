@@ -18,8 +18,9 @@
  * - Command Engine: sts_execute_command (STATIC_TESTABLE) is the single
  *   transaction path — handles framing, TX, and a two-stage receive. Stage 1
  *   reads the fixed header to extract the packet length field. Stage 2 reads
- *   the remaining payload. The length field is validated against the minimum,
- *   RX buffer limit, and cmd->expected_rx_len before Stage 2 is attempted.
+ *   the remaining payload. If 4 + the length field differs from
+ *   cmd->expected_rx_len or exceeds the RX buffer, the attempt fails as
+ *   STS_ERR_MALFORMED before Stage 2.
  *   Broadcast IDs and expected_rx_len == 0 skip the receive entirely.
  *
  * - Ping: STS_servo_ping issues a PING instruction and updates is_online,
@@ -82,9 +83,10 @@ sts_result_t STS_Bus_FlushRx(sts_bus_t *bus) {
  * @details
  * Frames and transmits a command packet, then performs a two-stage receive:
  * Stage 1 reads the fixed header to extract the packet length field.
- * Stage 2 reads the remaining payload. The length field is validated against
- * STS_MIN_PKT_LEN_VAL, the RX buffer limit, and cmd->expected_rx_len before
- * Stage 2 is attempted. Skips RX entirely on broadcast IDs or expected_rx_len == 0.
+ * Stage 2 reads the remaining payload. If 4 + the length field differs from
+ * cmd->expected_rx_len or exceeds the RX buffer, the attempt is
+ * STS_ERR_MALFORMED: flushed, retried, counted. Skips RX entirely on broadcast
+ * IDs or expected_rx_len == 0.
  *
  * @note Not thread-safe. Add mutex protection here for RTOS support.
  *
@@ -137,6 +139,9 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
         if (res != STS_OK) continue;
 
         if (servo->id >= STS_ID_BROADCAST_SYNC || cmd->expected_rx_len == 0U) {
+            if (needed_retry) {
+                servo->bus->retry_saves++;
+            }
             return STS_OK;
         }
 
@@ -148,11 +153,8 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
         uint8_t  packet_len_field   = rx_buf[STS_IDX_LENGTH];
         uint16_t total_expected_size = (uint16_t)STS_PKT_FIXED_TOTAL + (uint16_t)packet_len_field;
 
-        if (total_expected_size > STS_MAX_RX_BUFFER) {
-            return STS_ERR_BUF_TOO_SMALL;
-        }
-
-        if (total_expected_size != cmd->expected_rx_len) {
+        /* Too long for rx_buf is malformed, like any unexpected length. */
+        if (total_expected_size > STS_MAX_RX_BUFFER || total_expected_size != cmd->expected_rx_len) {
             res = STS_ERR_MALFORMED;
             STS_Bus_FlushRx(servo->bus);
             continue;
@@ -251,8 +253,8 @@ sts_result_t STS_servo_ping(sts_servo_t *servo) {
 
 /* Corrupted, short or noisy reply rather than silence: worth one more ping. */
 static uint8_t sts_scan_worth_reping(sts_result_t res) {
-    return (res == STS_ERR_HEADER   || res == STS_ERR_ID_MISMATCH || res == STS_ERR_CHECKSUM ||
-            res == STS_ERR_MALFORMED || res == STS_ERR_BUF_TOO_SMALL || res == STS_ERR_RX_FAIL) ? 1U : 0U;
+    return (res == STS_ERR_HEADER    || res == STS_ERR_ID_MISMATCH || res == STS_ERR_CHECKSUM ||
+            res == STS_ERR_MALFORMED || res == STS_ERR_RX_FAIL) ? 1U : 0U;
 }
 
 sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,

@@ -135,8 +135,8 @@ typedef void (*sts_scan_cb_t)(uint8_t id, uint8_t attempt, sts_result_t result, 
 /**
  * @brief Pings IDs first_id to last_id in order and stops at the first servo that answers.
  * @note  A reply counts when the ping returns STS_OK or STS_ERR_HARDWARE. After a header, ID,
- *        checksum, length, buffer-size or receive error the bus is flushed and the same ID is
- *        pinged once more. Each ping uses the bus's max_retries; 0 keeps a scan of absent IDs short.
+ *        checksum, length or receive error the bus is flushed and the same ID is pinged once
+ *        more. Each ping uses the bus's max_retries; 0 keeps a scan of absent IDs short.
  * @param bus      Initialised bus handle.
  * @param first_id First ID to ping (0 to 253).
  * @param last_id  Last ID to ping (first_id to 253).
