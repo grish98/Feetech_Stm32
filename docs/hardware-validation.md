@@ -52,7 +52,7 @@ These are direct observations from a single bench: one MCU, one servo, one cable
 
 Across these campaigns, the command engine recorded no retries and no terminal transport or protocol failures. These results cover the instrumented paths and do not rule out faults that produce plausible but incorrect data.
 
-`uart_drain_rx` has no independent counter, but calls from `STM32_UART_Receive` return a transport error to the command engine, where retries or exhausted attempts are counted. Explicit flush callbacks also run before retries and after unexpected response lengths. Some early returns in `sts_execute_command` also bypass `hard_failures`, including an oversized reported packet length, which returns `STS_ERR_BUF_TOO_SMALL` after the transaction has already been counted. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
+`uart_drain_rx` has no independent counter, but calls from `STM32_UART_Receive` return a transport error to the command engine, where retries or exhausted attempts are counted. Explicit flush callbacks also run before retries and after unexpected response lengths. In the firmware these campaigns ran, some early returns in `sts_execute_command` also bypassed `hard_failures`, including an oversized reported packet length, which returned `STS_ERR_BUF_TOO_SMALL` after the transaction had already been counted. The engine now treats an oversized length as a malformed reply: flushed, retried and counted. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
 
 ## Postmortem: intermittent acceleration failure
 

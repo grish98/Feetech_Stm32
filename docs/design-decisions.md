@@ -26,7 +26,7 @@ requirements are explained in [Ring buffer design](ring-buffer.md).
 All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, gives retry policy and the transaction counters a single home, and provides one point of change for future work such as mutex protection or asynchronous IO. Every register primitive and every high-level command is a thin wrapper that fills in an `sts_cmd_t` and calls the engine.
 
 **Why a two-stage receive?**
-STS responses are variable length. The engine first reads the four fixed bytes (two header bytes, ID, and length), extracts the length field, validates it against the protocol minimum, the RX buffer limit, and the caller's `expected_rx_len`, and only then reads the remaining payload. Reading a length-prefixed payload in two stages means a corrupt length field is rejected before it can be used to size a read, rather than after.
+STS responses are variable length. The engine first reads the four fixed bytes (two header bytes, ID, and length), extracts the length field, checks it against the caller's `expected_rx_len` and the RX buffer limit, and only then reads the remaining payload. Reading a length-prefixed payload in two stages means a corrupt length field is rejected before it can be used to size a read, rather than after.
 
 **Why is a hardware error never retried?**
 `STS_ERR_HARDWARE` means the servo replied and reported a fault in its status byte. That is a definitive answer, not a transport failure, so the engine breaks out of the retry loop immediately. Retrying would waste bus time re-asking a question that has already been answered. The same reasoning drives the ping behaviour below.

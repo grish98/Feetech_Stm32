@@ -313,6 +313,7 @@ int main(void) {
     RUN_TEST(test_STS_Bus_Scan_Skips_Transmit_Failure);
     RUN_TEST(test_STS_Bus_Scan_Skips_Busy_Transport);
     RUN_TEST(test_STS_Bus_Scan_Skips_Transport_Null_Pointer);
+    RUN_TEST(test_STS_Bus_Scan_Skips_Buffer_Size_Error);
     RUN_TEST(test_STS_Bus_Scan_Repings_After_Receive_Failure);
     RUN_TEST(test_STS_Bus_Scan_Reping_Recovers_Noisy_Reply);
     RUN_TEST(test_STS_Bus_Scan_Repings_After_Header_Error);
@@ -342,6 +343,18 @@ int main(void) {
     RUN_TEST(test_STS_Max_Retries_255_Rejected_Before_Sending);
     RUN_TEST(test_STS_Max_Retries_254_Makes_255_Attempts);
     RUN_TEST(test_STS_Bus_Scan_Max_Retries_255_Finds_Nothing);
+
+    RUN_TEST(test_STS_Reply_Length_Within_Buffer_Only_Exact_Accepted);
+    RUN_TEST(test_STS_Reply_Length_Past_Buffer_Is_Malformed);
+    RUN_TEST(test_STS_Oversize_Length_Retried_Then_Valid);
+    RUN_TEST(test_STS_Oversize_Length_Every_Attempt_Hard_Failure);
+    RUN_TEST(test_STS_Lost_Then_Oversize_Then_Valid);
+    RUN_TEST(test_STS_Length_Mismatch_Retried_Then_Valid);
+    RUN_TEST(test_STS_ExecuteCommand_Expected_Length_Past_Buffer_Is_Malformed);
+    RUN_TEST(test_STS_ExecuteCommand_Reply_Filling_Buffer_Accepted);
+    RUN_TEST(test_STS_ExecuteCommand_Expected_Length_Below_Any_Reply);
+    RUN_TEST(test_STS_Broadcast_Write_Retry_Save_Counted);
+    RUN_TEST(test_STS_Broadcast_Write_First_Attempt_No_Save);
 
     return UNITY_END();
 }
