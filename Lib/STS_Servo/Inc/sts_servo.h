@@ -31,7 +31,7 @@
 #define STS_MAX_TX_BUFFER       128U
 #define STS_MAX_RX_BUFFER       128U
 #define STS_DEFAULT_TIMEOUT_MS  10U
-#define STS_MAX_RETRIES         254U  /**< Largest accepted max_retries; larger values are rejected */
+#define STS_MAX_READ_RETRIES    254U  /**< Largest accepted max_read_retries; larger values are rejected */
 
 
 
@@ -53,16 +53,16 @@ struct sts_bus_s {
     void *port_handle;              /**< Opaque pointer to the physical UART hardware */
     sts_hal_transmit_t transmit;    /**< Injected TX function */
     sts_hal_receive_t receive;      /**< Injected RX function */
-    sts_hal_flush_rx_t flush_rx;    /**<  drain stale RX bytes between retries. NULL = no-op. */
+    sts_hal_flush_rx_t flush_rx;    /**<  drain stale RX bytes before read retries and after a bad length. NULL = no-op. */
 
-    uint8_t max_retries;            /**< Transaction retry count on transport error (0 = no retries, up to STS_MAX_RETRIES; above that every call returns STS_ERR_INVALID_PARAM) */
+    uint8_t max_read_retries;       /**< Retries for reads and ping only; writes are never retried (0 = none, up to STS_MAX_READ_RETRIES; above that every command that reaches the engine returns STS_ERR_INVALID_PARAM and sends nothing) */
 
     /* Error counters — never reset automatically; read via snapshot deltas.
      * Analogous to CAN TEC/REC: tolerance without counters is blindness. */
-    uint32_t total_transactions; /**< Every call to sts_execute_command */
-    uint32_t total_retries;      /**< Attempts after the first (each retry = +1) */
-    uint32_t retry_saves;        /**< Transactions that failed then succeeded on retry */
-    uint32_t hard_failures;      /**< Transactions that exhausted all attempts */
+    uint32_t total_transactions; /**< Every read, ping or write that reached the bus; one per call, retries included */
+    uint32_t total_retries;      /**< Read and ping attempts after the first (each retry = +1) */
+    uint32_t retry_saves;        /**< Reads and pings that failed, then succeeded on a retry */
+    uint32_t hard_failures;      /**< Transactions whose final attempt failed (neither OK nor HARDWARE) */
 
     uint8_t tx_buf[STS_MAX_TX_BUFFER];
     uint8_t rx_buf[STS_MAX_RX_BUFFER];
@@ -108,7 +108,7 @@ sts_result_t STS_Bus_Transmit(sts_bus_t *bus, const uint8_t *data, uint16_t len)
 sts_result_t STS_Bus_Receive(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout);
 
 /**
- * @brief  Drains stale bytes from the RX buffer between transaction retries.
+ * @brief  Drains stale bytes from the RX buffer before a read retry and after a bad reply length.
  *         No-op if the port did not register a flush_rx function.
  * @return STS_OK always (flush failures are non-fatal).
  */
@@ -120,23 +120,23 @@ sts_result_t STS_Bus_FlushRx(sts_bus_t *bus);
 * @param servo Pointer to the initialized servo handle.
 * @return STS_OK if the servo responds correctly, error code otherwise.
 * On success, the servo's is_online field is set to STS_ONLINE; on failure, it is set to STS_OFFLINE.
+* Retried up to bus->max_read_retries times.
  */
 sts_result_t STS_servo_ping(sts_servo_t *servo);
 
 /**
- * @brief Called by STS_Bus_Scan after every ping.
+ * @brief Called by STS_Bus_Scan once per ID, after its ping.
  * @param id      The ID just pinged.
- * @param attempt 0 for the first ping of an ID, 1 for the re-ping after a protocol error.
- * @param result  That ping's result.
+ * @param result  That ping's final result, after any read retries.
  * @param ctx     The caller's context pointer, passed through unchanged.
  */
-typedef void (*sts_scan_cb_t)(uint8_t id, uint8_t attempt, sts_result_t result, void *ctx);
+typedef void (*sts_scan_cb_t)(uint8_t id, sts_result_t result, void *ctx);
 
 /**
  * @brief Pings IDs first_id to last_id in order and stops at the first servo that answers.
- * @note  A reply counts when the ping returns STS_OK or STS_ERR_HARDWARE. After a header, ID,
- *        checksum, length or receive error the bus is flushed and the same ID is pinged once
- *        more. Each ping uses the bus's max_retries; 0 keeps a scan of absent IDs short.
+ * @note  A reply counts when the ping returns STS_OK or STS_ERR_HARDWARE. Each ID gets one
+ *        ping, retried up to the bus's max_read_retries; each retry costs an absent ID one
+ *        more receive timeout.
  * @param bus      Initialised bus handle.
  * @param first_id First ID to ping (0 to 253).
  * @param last_id  Last ID to ping (first_id to 253).
@@ -157,21 +157,26 @@ sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
 
 /**
  * @brief Writes a single byte (8-bit) to a specific servo register.
+ * @note  One attempt, never retried. If the command was sent and the call fails, the outcome
+ *        is unknown; argument errors send nothing. Read the register back where it matters.
  */
 sts_result_t STS_Write8(sts_servo_t *servo, uint8_t reg_addr, uint8_t value);
 
 /**
  * @brief Writes a word (16-bit) to a specific servo register (Little-Endian).
+ * @note  One attempt, never retried; see STS_Write8.
  */
 sts_result_t STS_Write16(sts_servo_t *servo, uint8_t reg_addr, uint16_t value);
 
 /**
  * @brief Reads a single byte (8-bit) from a specific servo register.
+ * @note  Retried up to bus->max_read_retries times.
  */
 sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out);
 
 /**
  * @brief Reads a word (16-bit) from a specific servo register (Little-Endian).
+ * @note  Retried up to bus->max_read_retries times.
  */
 sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_out);
 

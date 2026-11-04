@@ -69,6 +69,15 @@ set(TEST_SCRIPT_FAIL_SOURCES
     Tests/Unity/unity.c
 )
 
+# The example application's start-up, with HAL, RTT, port and stress runner faked
+set(TEST_APP_SOURCES
+    Tests/test_runner_app.c
+    Tests/test_app_main.c
+    Tests/test_sts_utils.c
+    Tests/Unity/unity.c
+    App/Src/app_main.c
+)
+
 # Detect if we are using the ARM Toolchain or Native (Windows)
 if(CMAKE_C_COMPILER MATCHES "arm-none-eabi")
     set(IS_ARM_BUILD TRUE)
@@ -146,11 +155,24 @@ else()
         Tests/Unity
     )
     add_test(NAME ScriptFailTests COMMAND test_script_fail)
+
+    # ---  Application Start-up Test Executable: Tests/app_stubs shadows main.h and SEGGER_RTT.h ---
+    add_executable(test_app ${TEST_APP_SOURCES} ${DRIVER_SOURCES})
+    target_include_directories(test_app PRIVATE
+        Tests/app_stubs
+        Lib/STS_Servo/Inc
+        Lib/STS_Servo/Ports
+        Hardware_Tests
+        App/Inc
+        Tests
+        Tests/Unity
+    )
+    add_test(NAME AppTests COMMAND test_app)
     set_tests_properties(ScriptFailTests PROPERTIES PASS_REGULAR_EXPRESSION
         "test_Default_Handler_Fails_The_Test:FAIL[^\r\n]*transmit cap exceeded.*test_Null_Hook_Falls_Back_To_Default_Handler:FAIL[^\r\n]*transmit cap exceeded.*-[\r\n]+2 Tests 2 Failures 0 Ignored")
 
     # A hung test fails the run instead of stalling it; each suite takes well under a second.
-    set_tests_properties(ProtocolTests ServoTests RingBufferTests ScriptFailTests PROPERTIES TIMEOUT 10)
+    set_tests_properties(ProtocolTests ServoTests RingBufferTests ScriptFailTests AppTests PROPERTIES TIMEOUT 10)
 
     # --- Doxygen Section ---
     find_package(Doxygen)

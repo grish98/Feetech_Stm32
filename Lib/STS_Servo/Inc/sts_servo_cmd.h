@@ -12,6 +12,11 @@
  * All commands require an initialised sts_servo_t handle. See sts_servo.h
  * for bus and servo initialisation.
  *
+ * Set functions and STS_SetID make one attempt and are never retried. If the
+ * command was sent and the call fails, the outcome is unknown; argument errors
+ * send nothing. Read back where it matters.
+ * Get functions are retried up to bus->max_read_retries times.
+ *
  * @attention
  * Copyright (c) 2026 Grisham Balloo. All rights reserved.
  ******************************************************************************
@@ -53,6 +58,8 @@ typedef enum {
  * @brief Enables or disables motor torque output.
  * @param servo Pointer to an initialised servo handle.
  * @param enable Non-zero to enable torque, zero to disable (free spin).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetTorqueEnable(sts_servo_t *servo, uint8_t enable);
@@ -61,6 +68,8 @@ sts_result_t STS_SetTorqueEnable(sts_servo_t *servo, uint8_t enable);
  * @brief Sets the operating mode of the servo.
  * @param servo Pointer to an initialised servo handle.
  * @param mode The desired operating mode (Position, Speed, PWM, Step).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode);
@@ -69,6 +78,8 @@ sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode)
  * @brief Sets the absolute target position for the servo.
  * @param servo Pointer to an initialised servo handle.
  * @param position 0 to STS_MAX_POSITION.
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint16_t position);
@@ -95,6 +106,8 @@ sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out);
  * @param servo Pointer to an initialized servo handle.
  * @param speed The target speed magnitude (0 to STS_MAX_SPEED).
  * @param dir The desired rotation direction (STS_DIR_CCW or STS_DIR_CW).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or speciifc error code.
  */
 sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir);
@@ -103,6 +116,8 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
  * @brief Sets the acceleration profile for servo movements.
  * @param servo Pointer to an initialized servo handle.
  * @param acceleration The acceleration rate (0 to STS_MAX_ACCELERATION).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration);
@@ -115,6 +130,8 @@ sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration)
  *       clamped or wrapped, and nothing is sent.
  * @param servo Pointer to an initialized servo handle.
  * @param target The desired target value. Bounds depend on active mode.
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, STS_ERR_INVALID_PARAM if the target is out of range
  *         for the active mode or the mode is invalid, or the transaction's error code.
  */
@@ -126,6 +143,8 @@ sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target);
  * @param servo Pointer to an initialized servo handle.
  * @param steps Number of relative steps to execute (0 to STS_MAX_STEP).
  * @param dir The direction of rotation (STS_DIR_CW or STS_DIR_CCW).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction_t dir);
@@ -136,6 +155,8 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
  * @param servo Pointer to an initialized servo handle.
  * @param pwm Raw PWM effort value (0 to STS_MAX_PWM).
  * @param dir The direction to apply force (STS_DIR_CW or STS_DIR_CCW).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir);
@@ -145,6 +166,8 @@ sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t 
  * @note Safe for continuous dynamic updates. Reverts to EEPROM default on power cycle.
  * @param servo Pointer to an initialized servo handle.
  * @param limit Max torque value (0 to STS_MAX_TORQUE). 0 disables torque.
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specifc error code.
  */
 sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit);
@@ -187,6 +210,8 @@ sts_result_t STS_GetMovingStatus(sts_servo_t *servo, uint8_t *status_out);
  * and immediately locked (1) afterward to prevent flash corruption.
  * @param servo Pointer to an initialized servo handle.
  * @param lock EEPROM_LOCK to protect, EEPROM_UNLOCK to unprotect.
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock);
@@ -197,6 +222,8 @@ sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock);
  * @warning DANGER: Unlocks EEPROM. Repeated writes will PERMANENTLY DAMAGE the servo hardware.
  * @param servo Pointer to an initialized servo handle.
  * @param new_id The new ID (0 to STS_ID_BROADCAST_SYNC).
+ * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
+ *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, STS_ERR_INVALID_PARAM if ID is out of bounds.
  */
 sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id);
