@@ -4011,3 +4011,590 @@ void test_STS_Write_Not_Sent_When_Packet_Cannot_Be_Built(void) {
     TEST_ASSERT_EQUAL_UINT32(snapshot.total_transactions, len_bus.bus.total_transactions);
     TEST_ASSERT_EQUAL_UINT32(snapshot.hard_failures, len_bus.bus.hard_failures);
 }
+
+/* ==========================================================================
+ * VERIFIED WRITES
+ * ========================================================================== */
+
+#define VW_INST_READ                0x02U
+#define VW_IDX_ADDRESS              5U
+#define VW_IDX_VALUE                6U
+#define VW_TORQUE_ON                1U
+#define VW_TORQUE_OFF               0U
+#define VW_ENABLE_NONZERO           7U
+#define VW_LIMIT                    500U
+#define VW_LIMIT_OTHER              400U
+#define VW_LIMIT_TOO_HIGH           1001U
+#define VW_MODE_TOO_HIGH            9U
+#define VW_NEW_ID                   11U
+#define VW_REPLY_SLOTS              4U
+
+static uint8_t vw_rb8[VW_REPLY_SLOTS][EXPECTED_READ8_ACK_LEN];
+static uint8_t vw_rb16[VW_REPLY_SLOTS][EXPECTED_READ16_ACK_LEN];
+static uint8_t vw_ping_new[EXPECTED_WRITE_ACK_LEN];
+static uint8_t vw_ping_new_hw[EXPECTED_WRITE_ACK_LEN];
+
+/* 8-bit read reply from ID 10 carrying v, in a slot. */
+static const uint8_t *vw_read8(uint8_t slot, uint8_t v) {
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, &v, PAYLOAD_LEN_1_BYTE, vw_rb8[slot]);
+    return vw_rb8[slot];
+}
+
+/* 16-bit read reply from ID 10 carrying v (little-endian), in a slot. */
+static const uint8_t *vw_read16(uint8_t slot, uint16_t v) {
+    const uint8_t p[STS_DATA_LEN_16BIT] = { (uint8_t)(v & 0xFFU), (uint8_t)(v >> 8U) };
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, p, STS_DATA_LEN_16BIT, vw_rb16[slot]);
+    return vw_rb16[slot];
+}
+
+static void use_vw_bus(const mock_step_t *steps, uint16_t step_count) {
+    simulate_servo_response(VW_NEW_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, vw_ping_new);
+    simulate_servo_response(VW_NEW_ID, STS_BIT_ERR_OVERHEAT, NULL, PAYLOAD_LEN_NONE, vw_ping_new_hw);
+    use_rt_bus(steps, step_count, LEN_RETRIES);
+}
+
+/* Packets sent, in order: 'W' write, 'R' read, 'P' ping; each addressed to `ids[i]`, writes and reads at `reg`. */
+static void assert_vw_traffic(const char *kinds, const uint8_t *ids, uint8_t reg) {
+    uint32_t n = (uint32_t)strlen(kinds);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(n, script.tx_count, "packet count");
+    for (uint32_t i = 0U; i < n; i++) {
+        uint8_t inst = (kinds[i] == 'W') ? EXPECTED_INST_WRITE : (kinds[i] == 'R') ? VW_INST_READ : EXPECTED_INST_PING;
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(inst, script.tx_log[i][STS_IDX_INSTRUCTION], "instruction");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(ids[i], script.tx_log[i][STS_IDX_ID], "packet id");
+        if (kinds[i] != 'P') {
+            TEST_ASSERT_EQUAL_HEX8_MESSAGE(reg, script.tx_log[i][VW_IDX_ADDRESS], "register");
+        }
+    }
+}
+
+static const uint8_t vw_id10[] = {10U, 10U, 10U, 10U, 10U, 10U, 10U, 10U};
+
+#define VW_ACK                      {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK}
+#define VW_LOST                     {NULL, 0U, STS_OK}
+#define VW_RB8(slot, v)             {vw_read8((slot), (v)), EXPECTED_READ8_ACK_LEN, STS_OK}
+#define VW_RB16(slot, v)            {vw_read16((slot), (v)), EXPECTED_READ16_ACK_LEN, STS_OK}
+#define VW_COUNT(a)                 ((uint16_t)(sizeof(a) / sizeof((a)[0])))
+
+/* --- Generic primitives: one write, one read-back, never a re-send --- */
+
+void test_STS_Write8Verified_Confirmed(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+    TEST_ASSERT_EQUAL_HEX8(VW_TORQUE_ON, script.tx_log[0][VW_IDX_VALUE]);
+}
+
+void test_STS_Write8Verified_Mismatch_Not_Resent(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_OFF), VW_ACK, VW_RB8(1U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+/* The acknowledgement was lost but the write took effect: the read-back proves it. */
+void test_STS_Write8Verified_Lost_Ack_Confirmed_By_Read_Back(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write8Verified_Lost_Ack_Not_Applied(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB8(0U, VW_TORQUE_OFF), VW_ACK, VW_RB8(1U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write8Verified_Read_Back_Failure_Reported(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WRRR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write16Verified_Confirmed(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+    TEST_ASSERT_EQUAL_UINT16(EXPECTED_WRITE16_PACKET_LEN, script.tx_log_len[0]);
+    TEST_ASSERT_EQUAL_HEX8(STS_DATA_LEN_16BIT, script.tx_log[1][VW_IDX_VALUE]);
+}
+
+void test_STS_Write16Verified_Mismatch_Not_Resent(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16(0U, VW_LIMIT_OTHER), VW_ACK, VW_RB16(1U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+/* Nothing can be read back from a broadcast handle, so nothing is sent. */
+void test_STS_WriteVerified_Rejects_Null_And_Broadcast(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Write8Verified(NULL, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_Write16Verified(NULL, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    len_servo.id = STS_ID_BROADCAST_SYNC;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+/* --- Absolute registers: re-sent once when the read-back differs or fails --- */
+
+void test_STS_SetTorqueEnableVerified_Confirmed(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Resent_Once_After_Mismatch(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_OFF), VW_ACK, VW_RB8(1U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Second_Mismatch_Final(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_OFF), VW_ACK, VW_RB8(1U, VW_TORQUE_OFF),
+                                  VW_ACK, VW_RB8(2U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Lost_Ack_Not_Resent_When_Applied(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Resent_After_Failed_Read_Back(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WRRRWR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Second_Read_Back_Failure_Final(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_LOST, VW_LOST, VW_LOST,
+                                  VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WRRRWRRR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Normalises_Enable(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueEnableVerified(&len_servo, VW_ENABLE_NONZERO));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+    TEST_ASSERT_EQUAL_HEX8(VW_TORQUE_ON, script.tx_log[0][VW_IDX_VALUE]);
+}
+
+void test_STS_SetOperatingModeVerified_Resent_Leaves_Cached_Mode(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, STS_MODE_POSITION), VW_ACK, VW_RB8(1U, STS_MODE_SPEED) };
+    use_vw_bus(steps, VW_COUNT(steps));
+    len_servo.current_mode = STS_MODE_POSITION;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetOperatingModeVerified(&len_servo, STS_MODE_SPEED));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_OPERATION_MODE);
+    TEST_ASSERT_EQUAL_HEX8(STS_MODE_SPEED, script.tx_log[2][VW_IDX_VALUE]);
+    TEST_ASSERT_EQUAL_INT(STS_MODE_POSITION, len_servo.current_mode);
+}
+
+void test_STS_SetOperatingModeVerified_Rejects_Invalid_Mode(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetOperatingModeVerified(&len_servo, (sts_operating_mode_t)VW_MODE_TOO_HIGH));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetOperatingModeVerified(NULL, STS_MODE_SPEED));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+void test_STS_SetTorqueLimitVerified_Resent_Once_After_Mismatch(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16(0U, VW_LIMIT_OTHER), VW_ACK, VW_RB16(1U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueLimitVerified_Rejects_Out_Of_Range(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT_TOO_HIGH));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTorqueLimitVerified(NULL, VW_LIMIT));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+/* The maximum itself is a valid limit. */
+void test_STS_SetTorqueLimitVerified_Accepts_Maximum(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16(0U, STS_MAX_TORQUE) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueLimitVerified(&len_servo, STS_MAX_TORQUE));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueEnableVerified_Rejects_Null(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTorqueEnableVerified(NULL, VW_TORQUE_ON));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+/* --- ID change: confirmed by a ping at the new ID, never re-sent --- */
+
+static const uint8_t vw_id_write_then_ping[] = {10U, VW_NEW_ID, VW_NEW_ID, VW_NEW_ID};
+
+void test_STS_SetIDVerified_Confirmed_Updates_Handle(void) {
+    const mock_step_t steps[] = { VW_ACK, {vw_ping_new, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    assert_vw_traffic("WP", vw_id_write_then_ping, STS_REG_ID);
+    TEST_ASSERT_EQUAL_HEX8(VW_NEW_ID, script.tx_log[0][VW_IDX_VALUE]);
+    TEST_ASSERT_EQUAL_UINT8(VW_NEW_ID, len_servo.id);
+}
+
+void test_STS_SetIDVerified_Unconfirmed_Keeps_Handle(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    assert_vw_traffic("WPPP", vw_id_write_then_ping, STS_REG_ID);
+    TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, len_servo.id);
+}
+
+void test_STS_SetIDVerified_Lost_Ack_Confirmed_By_Ping(void) {
+    const mock_step_t steps[] = { VW_LOST, {vw_ping_new, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    assert_vw_traffic("WP", vw_id_write_then_ping, STS_REG_ID);
+    TEST_ASSERT_EQUAL_UINT8(VW_NEW_ID, len_servo.id);
+}
+
+/* A fault flag in the ping reply still proves the servo answers at the new ID. */
+void test_STS_SetIDVerified_Hardware_Status_Confirms(void) {
+    const mock_step_t steps[] = { VW_ACK, {vw_ping_new_hw, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    TEST_ASSERT_EQUAL_UINT8(VW_NEW_ID, len_servo.id);
+}
+
+/* A misconfigured bus sends nothing, so the argument error is reported, not VERIFY. */
+void test_STS_SetIDVerified_Reports_Rejected_Write(void) {
+    use_vw_bus(NULL, 0U);
+    len_bus.bus.max_read_retries = RETRIES_WRAPPING;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, len_servo.id);
+}
+
+void test_STS_SetIDVerified_Rejects_Broadcast_And_Null(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetIDVerified(&len_servo, STS_ID_BROADCAST_SYNC));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetIDVerified(&len_servo, STS_ID_BROADCAST_ASYNC));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetIDVerified(NULL, VW_NEW_ID));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, len_servo.id);
+}
+
+/* --- 16-bit fault paths --- */
+
+void test_STS_Write16Verified_Lost_Ack_Confirmed_By_Read_Back(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_Write16Verified_Lost_Ack_Not_Applied(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB16(0U, VW_LIMIT_OTHER), VW_ACK, VW_RB16(1U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_Write16Verified_Read_Back_Failure_Reported(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WRRR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueLimitVerified_Second_Mismatch_Final(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16(0U, VW_LIMIT_OTHER), VW_ACK, VW_RB16(1U, VW_LIMIT_OTHER),
+                                  VW_ACK, VW_RB16(2U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueLimitVerified_Lost_Ack_Not_Resent_When_Applied(void) {
+    const mock_step_t steps[] = { VW_LOST, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueLimitVerified_Resent_After_Failed_Read_Back(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WRRRWR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetTorqueLimitVerified_Second_Read_Back_Failure_Final(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_LOST, VW_LOST, VW_LOST, VW_ACK, VW_LOST, VW_LOST, VW_LOST,
+                                  VW_ACK, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WRRRWRRR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+/* --- Boundaries and handle checks --- */
+
+#define VW_LAST_UNICAST_ID          253U
+static const uint8_t vw_id253[] = {VW_LAST_UNICAST_ID, VW_LAST_UNICAST_ID};
+
+static void vw_from_id(uint8_t id) {
+    (void)STS_Servo_Init(&len_servo, &len_bus.bus, id);
+}
+
+void test_STS_SetOperatingModeVerified_Accepts_Step_Mode(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8(0U, STS_MODE_STEP) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetOperatingModeVerified(&len_servo, STS_MODE_STEP));
+    assert_vw_traffic("WR", vw_id10, STS_REG_OPERATION_MODE);
+}
+
+void test_STS_SetOperatingModeVerified_Rejects_First_Invalid_Mode(void) {
+    use_vw_bus(NULL, 0U);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetOperatingModeVerified(&len_servo, (sts_operating_mode_t)(STS_MODE_STEP + 1U)));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+/* ID 253 is the last unicast ID: a valid handle and a valid target. */
+void test_STS_Write8Verified_Works_From_Id_253(void) {
+    uint8_t one = VW_TORQUE_ON;
+    uint8_t rb[EXPECTED_READ8_ACK_LEN];
+    uint8_t ack[EXPECTED_WRITE_ACK_LEN];
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, ack);
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, &one, PAYLOAD_LEN_1_BYTE, rb);
+    const mock_step_t steps[] = { {ack, EXPECTED_WRITE_ACK_LEN, STS_OK}, {rb, EXPECTED_READ8_ACK_LEN, STS_OK} };
+    use_vw_bus(steps, VW_COUNT(steps));
+    vw_from_id(VW_LAST_UNICAST_ID);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id253, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write16Verified_Works_From_Id_253(void) {
+    const uint8_t p[STS_DATA_LEN_16BIT] = { (uint8_t)(VW_LIMIT & 0xFFU), (uint8_t)(VW_LIMIT >> 8U) };
+    uint8_t rb[EXPECTED_READ16_ACK_LEN];
+    uint8_t ack[EXPECTED_WRITE_ACK_LEN];
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, ack);
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, p, STS_DATA_LEN_16BIT, rb);
+    const mock_step_t steps[] = { {ack, EXPECTED_WRITE_ACK_LEN, STS_OK}, {rb, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_vw_bus(steps, VW_COUNT(steps));
+    vw_from_id(VW_LAST_UNICAST_ID);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id253, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_SetIDVerified_Accepts_Id_253(void) {
+    uint8_t ping[EXPECTED_WRITE_ACK_LEN];
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, ping);
+    const mock_step_t steps[] = { VW_ACK, {ping, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    const uint8_t ids[] = {TEST_VALID_ID, VW_LAST_UNICAST_ID};
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetIDVerified(&len_servo, VW_LAST_UNICAST_ID));
+    assert_vw_traffic("WP", ids, STS_REG_ID);
+    TEST_ASSERT_EQUAL_UINT8(VW_LAST_UNICAST_ID, len_servo.id);
+}
+
+void test_STS_SetIDVerified_Works_From_Id_253(void) {
+    uint8_t ack[EXPECTED_WRITE_ACK_LEN];
+    simulate_servo_response(VW_LAST_UNICAST_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, ack);
+    const mock_step_t steps[] = { {ack, EXPECTED_WRITE_ACK_LEN, STS_OK}, {vw_ping_new, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    const uint8_t ids[] = {VW_LAST_UNICAST_ID, VW_NEW_ID};
+    use_vw_bus(steps, VW_COUNT(steps));
+    vw_from_id(VW_LAST_UNICAST_ID);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    assert_vw_traffic("WP", ids, STS_REG_ID);
+    TEST_ASSERT_EQUAL_UINT8(VW_NEW_ID, len_servo.id);
+}
+
+/* A broadcast write to 0x05 would renumber every servo on the bus. */
+void test_STS_SetIDVerified_Rejects_Broadcast_Handle(void) {
+    use_vw_bus(NULL, 0U);
+    len_servo.id = STS_ID_BROADCAST_SYNC;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    len_servo.id = STS_ID_BROADCAST_ASYNC;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+}
+
+void test_STS_SetIDVerified_Reports_Null_Bus(void) {
+    use_vw_bus(NULL, 0U);
+    len_servo.bus = NULL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetIDVerified(&len_servo, VW_NEW_ID));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT8(TEST_VALID_ID, len_servo.id);
+}
+
+/* --- A servo flagging a fault still answers: a matching read-back is confirmed --- */
+
+static uint8_t vw_rb8_hw[VW_REPLY_SLOTS][EXPECTED_READ8_ACK_LEN];
+static uint8_t vw_rb16_hw[VW_REPLY_SLOTS][EXPECTED_READ16_ACK_LEN];
+
+static const uint8_t *vw_read8_hw(uint8_t slot, uint8_t v) {
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, &v, PAYLOAD_LEN_1_BYTE, vw_rb8_hw[slot]);
+    return vw_rb8_hw[slot];
+}
+
+static const uint8_t *vw_read16_hw(uint8_t slot, uint16_t v) {
+    const uint8_t p[STS_DATA_LEN_16BIT] = { (uint8_t)(v & 0xFFU), (uint8_t)(v >> 8U) };
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, p, STS_DATA_LEN_16BIT, vw_rb16_hw[slot]);
+    return vw_rb16_hw[slot];
+}
+
+#define VW_RB8_HW(slot, v)          {vw_read8_hw((slot), (v)), EXPECTED_READ8_ACK_LEN, STS_OK}
+#define VW_RB16_HW(slot, v)         {vw_read16_hw((slot), (v)), EXPECTED_READ16_ACK_LEN, STS_OK}
+
+void test_STS_Write8Verified_Faulted_Servo_Match_Reports_Hardware(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8_HW(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write8Verified_Faulted_Servo_Mismatch_Is_Verify(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8_HW(0U, VW_TORQUE_OFF) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write8Verified(&len_servo, STS_REG_TORQUE_ENABLE, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_Write16Verified_Faulted_Servo_Match_Reports_Hardware(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16_HW(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+void test_STS_Write16Verified_Faulted_Servo_Mismatch_Is_Verify(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16_HW(0U, VW_LIMIT_OTHER) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write16Verified(&len_servo, STS_REG_TORQUE_LIMIT, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+/* Torque off on an overheated servo: confirmed and not re-sent, with the fault still reported. */
+void test_STS_SetTorqueEnableVerified_Off_On_Faulted_Servo_Not_Resent(void) {
+    const mock_step_t steps[] = { {rt_ack_hw, EXPECTED_WRITE_ACK_LEN, STS_OK}, VW_RB8_HW(0U, VW_TORQUE_OFF),
+                                  VW_ACK, VW_RB8(1U, VW_TORQUE_OFF) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_OFF));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueEnableVerified_Faulted_Servo_Mismatch_Resent(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB8_HW(0U, VW_TORQUE_ON), VW_ACK, VW_RB8_HW(1U, VW_TORQUE_OFF) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_OFF));
+    assert_vw_traffic("WRWR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueLimitVerified_Faulted_Servo_Match_Not_Resent(void) {
+    const mock_step_t steps[] = { VW_ACK, VW_RB16_HW(0U, VW_LIMIT), VW_ACK, VW_RB16(1U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}
+
+/* A noise byte ahead of a short faulted status packet: the parser finds the packet, but the reply in rx_buf
+ * does not start at its header, so no value can be trusted and the read-back is not confirmed. */
+#define VW_NOISE_ID                 3U
+void test_STS_Write8Verified_Unreadable_Faulted_Reply_Is_Verify(void) {
+    uint8_t ack[EXPECTED_WRITE_ACK_LEN];
+    uint8_t status[EXPECTED_WRITE_ACK_LEN];
+    uint8_t frame[EXPECTED_READ8_ACK_LEN];
+    simulate_servo_response(VW_NOISE_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, ack);
+    simulate_servo_response(VW_NOISE_ID, STS_BIT_ERR_OVERHEAT, NULL, PAYLOAD_LEN_NONE, status);
+    frame[0] = 0x00U;                                   /* noise byte */
+    memcpy(&frame[1], status, sizeof(status));
+    const mock_step_t steps[] = { {ack, EXPECTED_WRITE_ACK_LEN, STS_OK}, {frame, EXPECTED_READ8_ACK_LEN, STS_OK} };
+    const uint8_t ids[] = {VW_NOISE_ID, VW_NOISE_ID};
+    use_vw_bus(steps, VW_COUNT(steps));
+    vw_from_id(VW_NOISE_ID);
+
+    /* The noise byte shifts the packet's ID (3) into the length position: stage 1 accepts 7 bytes. */
+    TEST_ASSERT_EQUAL_HEX8(VW_NOISE_ID, frame[IDX_LENGTH_BYTE]);
+    /* The value written equals the byte a misaligned read would take (the status, 0x04): only the alignment
+     * check stops a false confirmation. */
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write8Verified(&len_servo, STS_REG_ACCELERATION, STS_BIT_ERR_OVERHEAT));
+    assert_vw_traffic("WR", ids, STS_REG_ACCELERATION);
+
+    /* Writing 0: no value at all may be taken from the unreadable reply. */
+    use_vw_bus(steps, VW_COUNT(steps));
+    vw_from_id(VW_NOISE_ID);
+    TEST_ASSERT_EQUAL_INT(STS_ERR_VERIFY, STS_Write8Verified(&len_servo, STS_REG_ACCELERATION, 0U));
+    assert_vw_traffic("WR", ids, STS_REG_ACCELERATION);
+}
+
+/* A transport caller error fails the same way again: reported, with no re-send. */
+void test_STS_SetTorqueEnableVerified_Caller_Error_Not_Resent(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_NULL_PTR}, {NULL, 0U, STS_ERR_NULL_PTR},
+                                  VW_ACK, VW_RB8(0U, VW_TORQUE_ON) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, STS_SetTorqueEnableVerified(&len_servo, VW_TORQUE_ON));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_ENABLE);
+}
+
+void test_STS_SetTorqueLimitVerified_Caller_Error_Not_Resent(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_INVALID_PARAM}, {NULL, 0U, STS_ERR_INVALID_PARAM},
+                                  VW_ACK, VW_RB16(0U, VW_LIMIT) };
+    use_vw_bus(steps, VW_COUNT(steps));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetTorqueLimitVerified(&len_servo, VW_LIMIT));
+    assert_vw_traffic("WR", vw_id10, STS_REG_TORQUE_LIMIT);
+}

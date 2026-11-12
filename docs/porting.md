@@ -30,7 +30,7 @@ bus.flush_rx    = MyPort_FlushRx;  /* optional */
 bus.max_read_retries = 2U;         /* reads and ping only; 0 = one attempt */
 ```
 
-Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it. `max_read_retries` accepts 0 to `STS_MAX_READ_RETRIES` (254); with 255 every transaction, read or write, returns `STS_ERR_INVALID_PARAM` and sends nothing. Writes always make one attempt, because the engine cannot tell a lost command from a lost acknowledgement. If the command was sent and the call fails, the outcome is unknown; argument errors send nothing. Read the register back where it matters.
+Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it. `max_read_retries` accepts 0 to `STS_MAX_READ_RETRIES` (254); with 255 every transaction, read or write, returns `STS_ERR_INVALID_PARAM` and sends nothing. The engine makes one attempt for every write, because it cannot tell a lost command from a lost acknowledgement; the verified torque-enable, operating-mode and torque-limit functions (`STS_SetTorqueEnableVerified` and the others in `sts_servo_cmd.h`) read the register back and re-send it once if the read-back differs or fails. If the command was sent and the call fails, the outcome is unknown; argument errors send nothing. Read the register back where it matters.
 
 ## Timing hooks
 

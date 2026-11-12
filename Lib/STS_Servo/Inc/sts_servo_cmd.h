@@ -12,9 +12,12 @@
  * All commands require an initialised sts_servo_t handle. See sts_servo.h
  * for bus and servo initialisation.
  *
- * Set functions and STS_SetID make one attempt and are never retried. If the
- * command was sent and the call fails, the outcome is unknown; argument errors
- * send nothing. Read back where it matters.
+ * The engine never retries a write: the unverified Set functions and STS_SetID
+ * make one attempt. If the command was sent and the call fails, the outcome is
+ * unknown; argument errors send nothing. Read back where it matters. The verified
+ * functions at the end of this header do the confirming: they read the register
+ * back (STS_SetIDVerified pings the new ID instead), and the verified group
+ * re-sends an absolute register once when the read-back differs or fails.
  * Get functions are retried up to bus->max_read_retries times.
  *
  * @attention
@@ -227,3 +230,36 @@ sts_result_t STS_SetEEPROMLock(sts_servo_t *servo, uint8_t lock);
  * @return sts_result_t STS_OK on success, STS_ERR_INVALID_PARAM if ID is out of bounds.
  */
 sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id);
+
+/**
+ * @name Verified writes
+ * Write, then read the register back. Torque enable, mode and torque limit are absolute, so a mismatch or a
+ * failed read-back is followed by one re-send and one more read-back. Results: STS_OK confirmed;
+ * STS_ERR_HARDWARE confirmed, but the servo flags a fault in its status byte (no re-send);
+ * STS_ERR_VERIFY not confirmed; otherwise the failing read-back's code or an argument error (nothing sent,
+ * no re-send). A lost acknowledgement still counts in hard_failures when the read-back confirms the write.
+ * The read-back follows the write at once: how long a servo takes to answer after an EEPROM-area write
+ * (mode, ID) has not been measured, so allow read retries for those.
+ * @{
+ */
+
+/** @brief STS_SetTorqueEnable, confirmed by reading 0x28 back; re-sent once if needed. */
+sts_result_t STS_SetTorqueEnableVerified(sts_servo_t *servo, uint8_t enable);
+
+/** @brief STS_SetOperatingMode, confirmed by reading 0x21 back; re-sent once if needed. Does not change current_mode. */
+sts_result_t STS_SetOperatingModeVerified(sts_servo_t *servo, sts_operating_mode_t mode);
+
+/** @brief STS_SetTorqueLimit, confirmed by reading 0x30 back; re-sent once if needed. */
+sts_result_t STS_SetTorqueLimitVerified(sts_servo_t *servo, uint16_t limit);
+
+/**
+ * @brief STS_SetID, confirmed by a ping at new_id; never re-sent.
+ * @note  EEPROM unlock and lock stay with the caller, as for STS_SetID. A ping returning STS_OK or
+ *        STS_ERR_HARDWARE confirms the change and servo->id becomes new_id. new_id must be free on the bus:
+ *        another servo already at new_id would answer the ping and confirm a change that did not happen.
+ * @return STS_OK confirmed; STS_ERR_VERIFY not confirmed (servo->id unchanged); STS_ERR_INVALID_PARAM for
+ *         new_id 254 or 255 or a broadcast handle, STS_ERR_NULL_PTR for NULL, with nothing sent.
+ */
+sts_result_t STS_SetIDVerified(sts_servo_t *servo, uint8_t new_id);
+
+/** @} */

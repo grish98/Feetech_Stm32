@@ -55,7 +55,7 @@ struct sts_bus_s {
     sts_hal_receive_t receive;      /**< Injected RX function */
     sts_hal_flush_rx_t flush_rx;    /**<  drain stale RX bytes before read retries and after a bad length. NULL = no-op. */
 
-    uint8_t max_read_retries;       /**< Retries for reads and ping only; writes are never retried (0 = none, up to STS_MAX_READ_RETRIES; above that every command that reaches the engine returns STS_ERR_INVALID_PARAM and sends nothing) */
+    uint8_t max_read_retries;       /**< Read and ping retries, 0 to STS_MAX_READ_RETRIES (above that, engine commands return STS_ERR_INVALID_PARAM). The engine never retries a write; verified torque, mode and limit writes re-send once. */
 
     /* Error counters — never reset automatically; read via snapshot deltas.
      * Analogous to CAN TEC/REC: tolerance without counters is blindness. */
@@ -158,7 +158,8 @@ sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
 /**
  * @brief Writes a single byte (8-bit) to a specific servo register.
  * @note  One attempt, never retried. If the command was sent and the call fails, the outcome
- *        is unknown; argument errors send nothing. Read the register back where it matters.
+ *        is unknown; argument errors send nothing. Read the register back where it matters, or use
+ *        STS_Write8Verified.
  */
 sts_result_t STS_Write8(sts_servo_t *servo, uint8_t reg_addr, uint8_t value);
 
@@ -179,6 +180,20 @@ sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out)
  * @note  Retried up to bus->max_read_retries times.
  */
 sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_out);
+
+/**
+ * @brief Writes a byte, then reads the register back to confirm it. Never re-sends.
+ * @note  The read-back runs even if the write failed, since a failed write may still have been applied.
+ * @return STS_OK if the read-back equals value; STS_ERR_HARDWARE if it equals value but the servo flags a
+ *         fault in its status byte; STS_ERR_VERIFY if it differs; the read's code if the read-back failed.
+ *         STS_ERR_NULL_PTR or STS_ERR_INVALID_PARAM (broadcast handle) with nothing sent.
+ */
+sts_result_t STS_Write8Verified(sts_servo_t *servo, uint8_t reg_addr, uint8_t value);
+
+/**
+ * @brief Writes a word, then reads the register back to confirm it. Never re-sends; see STS_Write8Verified.
+ */
+sts_result_t STS_Write16Verified(sts_servo_t *servo, uint8_t reg_addr, uint16_t value);
 
 
 /** @cond INTERNAL */
