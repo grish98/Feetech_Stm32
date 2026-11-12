@@ -82,7 +82,8 @@ typedef enum {
     STS_ERR_HARDWARE,         /**< Servo reported hardware fault (Address 0x41) */
     STS_ERR_TX_FAIL,          /**< Hardware-level transmission failure */
     STS_ERR_RX_FAIL,
-    STS_ERR_BUSY              /**< Interface is currently occupied */
+    STS_ERR_BUSY,             /**< Interface is currently occupied */
+    STS_ERR_VERIFY            /**< Verified write not confirmed: the read-back differs or the new ID does not answer */
 
 } sts_result_t;
 

@@ -421,3 +421,70 @@ sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_ou
     }
     return res;
 }
+
+/* ==========================================================================
+ * VERIFIED WRITES
+ * ========================================================================== */
+
+/* After a read returned STS_ERR_HARDWARE: take the value from the reply in rx_buf if it is the complete,
+ * valid reply from this servo (the fault flag is set, but the checksum passed). */
+static uint8_t sts_faulted_reply_value(const sts_servo_t *servo, uint16_t data_len, uint16_t *value_out) {
+    const uint8_t *rx = servo->bus->rx_buf;
+    uint16_t total = (uint16_t)(STS_MIN_PACKET_SIZE + data_len);
+    uint8_t cs = 0U;
+    if (rx[STS_IDX_HEADER_1] != STS_HEADER || rx[STS_IDX_HEADER_2] != STS_HEADER || rx[STS_IDX_ID] != servo->id ||
+        rx[STS_IDX_LENGTH] != (uint8_t)(data_len + 2U) || rx[STS_IDX_STATUS] == STS_HARDWARE_OK ||
+        sts_calculate_checksum(rx, total, &cs) != STS_OK || cs != rx[total - 1U]) {
+        return 0U;
+    }
+    *value_out = (data_len == STS_DATA_LEN_8BIT) ? (uint16_t)rx[STS_IDX_PARAM_START]
+               : (uint16_t)(rx[STS_IDX_PARAM_START] | (rx[STS_IDX_PARAM_START + 1U] << 8U));
+    return 1U;
+}
+
+/* Read-back outcome: STS_OK match, STS_ERR_HARDWARE match from a servo flagging a fault, STS_ERR_VERIFY mismatch. */
+static sts_result_t sts_compare_read_back(const sts_servo_t *servo, sts_result_t res, uint16_t data_len,
+                                          uint16_t read_back, uint16_t expected) {
+    if (res == STS_ERR_HARDWARE) {
+        uint16_t faulted = 0U;
+        if (sts_faulted_reply_value(servo, data_len, &faulted) == 0U) {
+            return STS_ERR_VERIFY;
+        }
+        return (faulted == expected) ? STS_ERR_HARDWARE : STS_ERR_VERIFY;
+    }
+    if (res != STS_OK) {
+        return res;
+    }
+    return (read_back == expected) ? STS_OK : STS_ERR_VERIFY;
+}
+
+sts_result_t STS_Write8Verified(sts_servo_t *servo, uint8_t reg_addr, uint8_t value) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (servo->id >= STS_ID_BROADCAST_SYNC) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    /* The write's own result is not final: a lost acknowledgement may hide a write that took effect. */
+    (void)STS_Write8(servo, reg_addr, value);
+
+    uint8_t read_back = 0U;
+    sts_result_t res = STS_Read8(servo, reg_addr, &read_back);
+    return sts_compare_read_back(servo, res, STS_DATA_LEN_8BIT, read_back, value);
+}
+
+sts_result_t STS_Write16Verified(sts_servo_t *servo, uint8_t reg_addr, uint16_t value) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (servo->id >= STS_ID_BROADCAST_SYNC) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    (void)STS_Write16(servo, reg_addr, value);
+
+    uint16_t read_back = 0U;
+    sts_result_t res = STS_Read16(servo, reg_addr, &read_back);
+    return sts_compare_read_back(servo, res, STS_DATA_LEN_16BIT, read_back, value);
+}

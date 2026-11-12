@@ -235,3 +235,79 @@ sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id) {
      * Not bundled here to prevent accidental flash wear on misuse. */
     return STS_Write8(servo, STS_REG_ID, new_id);
 }
+
+/* --- Verified writes --- */
+
+/* Confirmed (with or without a fault flag) or a caller error: nothing to gain from a re-send. */
+static uint8_t verify_is_final(sts_result_t res) {
+    return (res == STS_OK || res == STS_ERR_HARDWARE || res == STS_ERR_NULL_PTR || res == STS_ERR_INVALID_PARAM) ? 1U : 0U;
+}
+
+/* Absolute register: a second identical write gives the same final state, so one re-send is safe. */
+static sts_result_t verify8_resend_once(sts_servo_t *servo, uint8_t reg, uint8_t value) {
+    sts_result_t res = STS_Write8Verified(servo, reg, value);
+    if (verify_is_final(res) == 0U) {
+        res = STS_Write8Verified(servo, reg, value);
+    }
+    return res;
+}
+
+static sts_result_t verify16_resend_once(sts_servo_t *servo, uint8_t reg, uint16_t value) {
+    sts_result_t res = STS_Write16Verified(servo, reg, value);
+    if (verify_is_final(res) == 0U) {
+        res = STS_Write16Verified(servo, reg, value);
+    }
+    return res;
+}
+
+sts_result_t STS_SetTorqueEnableVerified(sts_servo_t *servo, uint8_t enable) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    uint8_t value = (enable != 0U) ? STS_TORQUE_ENABLE : STS_TORQUE_DISABLE;
+    return verify8_resend_once(servo, STS_REG_TORQUE_ENABLE, value);
+}
+
+sts_result_t STS_SetOperatingModeVerified(sts_servo_t *servo, sts_operating_mode_t mode) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (mode > STS_MODE_STEP) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    return verify8_resend_once(servo, STS_REG_OPERATION_MODE, (uint8_t)mode);
+}
+
+sts_result_t STS_SetTorqueLimitVerified(sts_servo_t *servo, uint16_t limit) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (limit > STS_MAX_TORQUE) {
+        return STS_ERR_INVALID_PARAM;
+    }
+    return verify16_resend_once(servo, STS_REG_TORQUE_LIMIT, limit);
+}
+
+sts_result_t STS_SetIDVerified(sts_servo_t *servo, uint8_t new_id) {
+    if (servo == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+    if (new_id >= STS_ID_BROADCAST_SYNC || servo->id >= STS_ID_BROADCAST_SYNC) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    /* Never re-sent: a repeat would go to the old ID after a change that happened. */
+    sts_result_t res = STS_SetID(servo, new_id);
+    if (res == STS_ERR_NULL_PTR || res == STS_ERR_INVALID_PARAM) {
+        return res;
+    }
+
+    sts_servo_t probe = *servo;
+    probe.id = new_id;
+    res = STS_servo_ping(&probe);
+    if (res != STS_OK && res != STS_ERR_HARDWARE) {
+        return STS_ERR_VERIFY;
+    }
+    servo->id = new_id;
+    return STS_OK;
+}
