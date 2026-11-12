@@ -1,6 +1,6 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 346 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 376 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/github/v/tag/grish98/Feetech_Stm32?sort=semver)](https://github.com/grish98/Feetech_Stm32/tags)
@@ -11,7 +11,7 @@ A portable, dependency-free C11 core for **Feetech STS series smart servos** ove
 
 ## Status
 
-- **Protocol and service core**: implemented and covered by **292 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass. CI also builds the STM32 firmware in Debug and Release.
+- **Protocol and service core**: implemented and covered by **322 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass. CI also builds the STM32 firmware in Debug and Release.
 - **STM32F103 port**: validated across four historical on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
 - **Port simplification**: PA2 now stays in AF open-drain mode, removing per-packet GPIO switching and the unused scope marker.
 - **Latest bench report**: two complete AF_OD campaigns passed **400 runs and 12,800 individual tests**, recording **304,227 transactions with zero retries or hard communication failures**. The tested configuration uses **1.5 kOhm from PA2/DATA to 3.3 V at 1 Mbaud, 8N1**; removing the resistor caused communication failure. Direction-separated captures measured approximately **195 ns command rise time** and **5 ns reply rise time**. See [hardware validation](docs/hardware-validation.md#current-af-open-drain-port).
@@ -30,7 +30,7 @@ An intermittent test failure was traced to state persisting between test runs ra
 - **Granular error reporting**: separate result codes distinguish validation, protocol, transport, timeout, and device faults
 - **Portable**: written in C11 with fixed-width types; no platform-specific dependencies in the core
 - **Broad command coverage**: position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID control
-- **386 host unit tests** (Unity/CTest), 40 of them self-tests of the scripted test transport, plus an on-target hardware integration and stress suite
+- **421 host unit tests** (Unity/CTest), 40 of them self-tests of the scripted test transport and 5 of the example application's start-up, plus an on-target hardware integration and stress suite
 
 ---
 
@@ -40,7 +40,7 @@ Three layers, each independently testable:
 
 **Protocol layer** (`sts_protocol`): stateless packet framing, checksum, and response parsing. It holds no knowledge of hardware or servo state, and each parse call has no shared parser state. Synchronisation of shared bus access remains the responsibility of the service or application layer.
 
-**Service layer** (`sts_servo`, `sts_servo_cmd`): HAL-agnostic servo management built on the protocol layer. Handles bus wiring, servo handles, and all transactions through a single command engine (`sts_execute_command`), which also carries the transaction, retry, and failure counters. Platform UART is injected as function pointers via `sts_bus_t`, so the core has no MCU dependency. The command set (`sts_servo_cmd`) provides motion control, telemetry reads, and configuration built on the register-access primitives.
+**Service layer** (`sts_servo`, `sts_servo_cmd`): HAL-agnostic servo management built on the protocol layer. Handles bus wiring, servo handles, and all transactions through one command engine: writes make a single attempt (`sts_execute_command`), and reads and ping retry up to `max_read_retries` times (`sts_execute_read`). Both update the transaction and failure counters; only the read path counts retries and retry saves. Platform UART is injected as function pointers via `sts_bus_t`, so the core has no MCU dependency. The command set (`sts_servo_cmd`) provides motion control, telemetry reads, and configuration built on the register-access primitives.
 
 **Port layer** (`Ports/sts_ports_stm32.c`): the STM32F103 implementation of the injected transmit, receive, and flush contract: DMA transfers with IDLE-line variable-length reception, direct-wired half-duplex turnaround, and bounded error recovery. Implementing the transport callbacks ports the core to another MCU, with this file as a worked reference; see the [porting guide](docs/porting.md).
 
@@ -78,7 +78,7 @@ These figures characterise one bench configuration: a single MCU, servo, cable, 
 `STS_ERR_HARDWARE` means the servo responded, so communication succeeded. The fault lies in the servo's internal state, such as overtemperature or overload, rather than the bus. Marking the servo offline in this case would be incorrect. Hardware error semantics belong in a higher application layer that has the context to make recovery decisions.
 
 **Why a centralised command engine?**
-All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, gives retry policy and the transaction counters a single home, and provides one point of change for future work such as mutex protection or asynchronous IO.
+All service layer transactions route through one command engine: `sts_execute_command` for writes and `sts_execute_read` for reads and ping. Both share one attempt function, so TX framing, RX receive, and response parsing live in one place, and the retry policy and the bus counters live in one module. That module is the one point of change for future work such as mutex protection (taken in both entry points) or asynchronous IO.
 
 **Why caller-provided buffers?**
 Dynamic allocation can introduce variable latency, fragmentation, and runtime allocation failures. Caller-provided API buffers make memory ownership and capacity explicit while keeping the core usable on targets without a heap.
@@ -105,7 +105,7 @@ sts_result_t my_uart_tx(sts_bus_t *bus, const uint8_t *data, uint16_t len) {
            ? STS_OK : STS_ERR_TX_FAIL;
 }
 
-/* Distinguish a silent bus from a transport fault; both are retryable, but only
+/* Distinguish a silent bus from a transport fault; reads retry both, but only
    the caller can tell them apart afterwards. */
 sts_result_t my_uart_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
     UART_HandleTypeDef *huart = (UART_HandleTypeDef *)bus->port_handle;
@@ -121,8 +121,8 @@ sts_bus_t   bus;
 sts_servo_t servo;
 
 STS_Bus_Init(&bus, &huart2, my_uart_tx, my_uart_rx);
-bus.flush_rx    = NULL;  /* optional: supply one to drain stale RX between retries */
-bus.max_retries = 2U;    /* 0 = single attempt */
+bus.flush_rx         = NULL;  /* optional: supply one to drain stale RX before read retries */
+bus.max_read_retries = 2U;    /* reads and ping only; writes are never retried */
 
 STS_Servo_Init(&servo, &bus, 0x01);
 
@@ -181,7 +181,7 @@ cmake --build build_native --config Debug
 ctest --test-dir build_native -C Debug --output-on-failure
 ```
 
-All 386 tests should pass across three suites: 40 in the protocol layer, 292 in the service suite (252 for the service and command layers and 40 self-tests of the scripted test transport), and 54 in the receive ring buffer. A fourth CTest entry runs two tests that must fail, to prove the scripted transport can fail a test; CTest reports it as passed only when both fail. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
+All 421 tests should pass across four suites: 40 in the protocol layer, 322 in the service suite (282 for the service and command layers and 40 self-tests of the scripted test transport), 54 in the receive ring buffer, and 5 for the example application's start-up, built on the host with the HAL, RTT and port faked. A fifth CTest entry runs two tests that must fail, to prove the scripted transport can fail a test; CTest reports it as passed only when both fail. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
 
 ### Build the API documentation
 

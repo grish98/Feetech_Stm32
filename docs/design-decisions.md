@@ -23,7 +23,10 @@ requirements are explained in [Ring buffer design](ring-buffer.md).
 ## Transactions
 
 **Why a centralised command engine?**
-All service layer transactions route through a single `sts_execute_command` function. This keeps TX framing, RX receive, and response parsing in one place, gives retry policy and the transaction counters a single home, and provides one point of change for future work such as mutex protection or asynchronous IO. Every register primitive and every high-level command is a thin wrapper that fills in an `sts_cmd_t` and calls the engine.
+All service layer transactions route through one command engine: `sts_execute_command` makes a single attempt and serves every write, and `sts_execute_read` runs the same attempt in a retry loop for reads and ping. Both share one attempt function, so TX framing, RX receive, and response parsing live in one place, and the retry policy and the bus counters live in one module. That module is the one point of change for future work such as mutex protection (taken in both entry points) or asynchronous IO. Every register primitive and every high-level command is a thin wrapper that fills in an `sts_cmd_t` and calls one of the two.
+
+**Why are writes never retried?**
+The engine cannot tell a lost command from a lost acknowledgement. Resending a write the servo already executed repeats it: a relative step moves twice, and an ID change is resent to the old ID and then reported as failed. Reads and ping have no side effects on the servo, so only they retry. If the command was sent and the call fails, the outcome is unknown; argument errors send nothing. Read the register back where it matters.
 
 **Why a two-stage receive?**
 STS responses are variable length. The engine first reads the four fixed bytes (two header bytes, ID, and length), extracts the length field, checks it against the caller's `expected_rx_len` and the RX buffer limit, and only then reads the remaining payload. Reading a length-prefixed payload in two stages means a corrupt length field is rejected before it can be used to size a read, rather than after.
@@ -35,7 +38,7 @@ STS responses are variable length. The engine first reads the four fixed bytes (
 `STS_ERR_HARDWARE` means the servo responded, so communication succeeded. The fault lies in the servo's internal state, such as overtemperature or overload, rather than the bus. Marking the servo offline in this case would be incorrect. Hardware error semantics belong in a higher application layer that has the context to make recovery decisions.
 
 **Why count retries separately from failures?**
-The bus tracks `total_transactions`, `total_retries`, `retry_saves`, and `hard_failures` independently. Tolerance without measurement is blindness: a bus that silently retries its way to success looks identical to a healthy one unless the retries are counted. The separation is deliberately analogous to the transmit and receive error counters on a CAN peripheral. `retry_saves` in particular answers a question a pass or fail result cannot, namely how often the retry policy was actually load-bearing.
+The bus tracks `total_transactions`, `total_retries`, `retry_saves`, and `hard_failures` independently. Tolerance without measurement is blindness: a bus that silently retries its way to success looks identical to a healthy one unless the retries are counted. The separation is deliberately analogous to the transmit and receive error counters on a CAN peripheral. `retry_saves` in particular answers a question a pass or fail result cannot, namely how often the retry policy was actually load-bearing. Only reads and ping retry, so `total_retries` and `retry_saves` describe reads; `hard_failures` counts every failed transaction that reached the bus, writes included.
 
 ## Protocol layer
 
@@ -73,7 +76,7 @@ Bundling the lock and unlock sequence inside `STS_SetID` would hide repeated fla
 
 These are documented rather than resolved, and are listed here so that a reader evaluating the driver does not have to discover them from the source.
 
-- **`sts_execute_command` is not thread-safe.** There is no mutex around the shared `tx_buf` and `rx_buf`, and no bus-level locking. This is correct for the current single-threaded bare-metal use. RTOS use would require a lock, and the centralised command engine is the intended place to add one.
+- **The command engine is not thread-safe.** Neither `sts_execute_command` (writes) nor `sts_execute_read` (reads and ping) takes a lock: there is no mutex around the shared `tx_buf` and `rx_buf`, and no bus-level locking. This is correct for the current single-threaded bare-metal use. RTOS use would require a per-bus lock in both entry points, held for the whole call so that a read's retries and the bus counters cannot interleave with another task's transaction.
 - **The STM32 port holds file-static state.** `s_huart`, the completion flags, and the byte count are file-scope statics, so the port supports one UART instance. Supporting a second bus would require moving that state into a per-bus context.
 - **The transaction API is fully blocking.** Every call spins until completion, timeout, or error. There is no asynchronous or queued variant.
 - **Sync Write and Bulk Read are unimplemented.** The instruction codes are defined in the register map but the service layer has no corresponding commands, so multi-servo coordinated motion is not yet available.

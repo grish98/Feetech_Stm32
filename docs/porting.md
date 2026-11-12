@@ -20,17 +20,17 @@ Every callback receives the bus handle, so platform state is reached through `bu
 
 ### Wiring it up
 
-`STS_Bus_Init` accepts only the two required callbacks. `flush_rx` and `max_retries` are assigned directly afterwards, because `STS_Bus_Init` zeroes the whole handle first:
+`STS_Bus_Init` accepts only the two required callbacks. `flush_rx` and `max_read_retries` are assigned directly afterwards, because `STS_Bus_Init` zeroes the whole handle first:
 
 ```c
 static sts_bus_t bus;
 
 STS_Bus_Init(&bus, &huart2, MyPort_Transmit, MyPort_Receive);
 bus.flush_rx    = MyPort_FlushRx;  /* optional */
-bus.max_retries = 2U;              /* 0 = one attempt, no retries */
+bus.max_read_retries = 2U;         /* reads and ping only; 0 = one attempt */
 ```
 
-Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it. `max_retries` accepts 0 to `STS_MAX_RETRIES` (254); with 255 every transaction returns `STS_ERR_INVALID_PARAM` and sends nothing.
+Assigning `flush_rx` before `STS_Bus_Init` has no effect: the init call clears it. `max_read_retries` accepts 0 to `STS_MAX_READ_RETRIES` (254); with 255 every transaction, read or write, returns `STS_ERR_INVALID_PARAM` and sends nothing. Writes always make one attempt, because the engine cannot tell a lost command from a lost acknowledgement. If the command was sent and the call fails, the outcome is unknown; argument errors send nothing. Read the register back where it matters.
 
 ## Timing hooks
 
@@ -65,7 +65,7 @@ The bus handle owns both buffers: `tx_buf` and `rx_buf`, each `128` bytes (`STS_
 The engine performs a two-stage receive per transaction:
 
 1. **Stage 1** requests exactly `STS_PKT_FIXED_TOTAL` (4) bytes into `rx_buf`: two header bytes, ID, and the length field.
-2. The engine adds the four header bytes to the length field. That total must equal the caller's `expected_rx_len` and be at most `STS_MAX_RX_BUFFER` (128). Otherwise the attempt returns `STS_ERR_MALFORMED`, calls `flush_rx`, and consumes a retry attempt.
+2. The engine adds the four header bytes to the length field. That total must equal the caller's `expected_rx_len` and be at most `STS_MAX_RX_BUFFER` (128). Otherwise the attempt returns `STS_ERR_MALFORMED` and calls `flush_rx`; a read then retries if attempts remain.
 3. **Stage 2** requests `packet_len_field` further bytes into `&rx_buf[4]`.
 
 Two implementation strategies both satisfy this:
@@ -75,7 +75,7 @@ Two implementation strategies both satisfy this:
 
 If you take the second approach, `receive` must still reject a response shorter than `STS_PKT_FIXED_TOTAL`; otherwise stage 1 will hand the engine an uninitialised length byte.
 
-`timeout_ms` is supplied per command and defaults to `STS_DEFAULT_TIMEOUT_MS` (10 ms). Return `STS_ERR_TIMEOUT` when it expires. The engine treats a timeout as a retryable transport failure.
+`timeout_ms` is supplied per command and defaults to `STS_DEFAULT_TIMEOUT_MS` (10 ms). Return `STS_ERR_TIMEOUT` when it expires. A read retries after a timeout; a write returns it.
 
 ## Half-duplex turnaround
 
@@ -91,7 +91,7 @@ A port for a single-wire bus must therefore, inside `transmit`:
 
 The STM32 port does this by keeping PA2 in alternate-function open-drain and switching UART direction through TE/RE, waiting on the UART `TC` flag before enabling RX, then arming RX DMA and enabling the IDLE interrupt. Variable-length responses are framed by the IDLE line: the DMA is armed for the full buffer, and the byte count is recovered from the DMA counter when the line goes idle.
 
-There is no per-packet GPIO reconfiguration or timed flush between TX and RX. The single SR/DR clear before a new transmission, the `uart_drain_rx` error-recovery routine, and the optional `STM32_UART_FlushRx` callback remain. The command engine calls that callback before retries and after an unexpected response length.
+There is no per-packet GPIO reconfiguration or timed flush between TX and RX. The single SR/DR clear before a new transmission, the `uart_drain_rx` error-recovery routine, and the optional `STM32_UART_FlushRx` callback remain. The command engine calls that callback before read retries and after an unexpected response length.
 
 The half-duplex configuration does not enable an STM32 internal pull-up. Fit **1.5 kOhm from PA2/DATA to 3.3 V** for the tested **1 Mbaud, 8N1** configuration. The latest report supersedes the earlier report of resistor-free operation: removing the external pull-up caused complete communication failure on this bench, despite the servo's measured weak idle bias. The failure mechanism is unresolved. Two 200-run campaigns passed with the resistor fitted; see [hardware validation](hardware-validation.md#current-af-open-drain-port) for measurements and remaining electrical evidence gaps.
 
@@ -114,10 +114,10 @@ Return these from the callbacks. The right-hand column is what the engine does w
 | Code | Meaning | Engine behaviour |
 | --- | --- | --- |
 | `STS_OK` | Operation completed | Proceeds to the next stage |
-| `STS_ERR_TX_FAIL` | Transmission failed at the hardware level | Retries if attempts remain |
-| `STS_ERR_RX_FAIL` | Reception failed, or the response was too short | Retries if attempts remain |
-| `STS_ERR_TIMEOUT` | No response within `timeout_ms` | Retries if attempts remain |
-| `STS_ERR_NULL_PTR` | `bus` or `data` was `NULL` | Retries, but the fault is a caller bug |
+| `STS_ERR_TX_FAIL` | Transmission failed at the hardware level | A read retries if attempts remain; a write returns it |
+| `STS_ERR_RX_FAIL` | Reception failed, or the response was too short | A read retries if attempts remain; a write returns it |
+| `STS_ERR_TIMEOUT` | No response within `timeout_ms` | A read retries if attempts remain; a write returns it |
+| `STS_ERR_NULL_PTR` | `bus` or `data` was `NULL` | Returned at once: the fault is a caller bug |
 
 Codes the port should **not** invent: `STS_ERR_HARDWARE`, `STS_ERR_CHECKSUM`, `STS_ERR_MALFORMED`, and `STS_ERR_ID_MISMATCH` are produced by the protocol layer from packet content. A transport that returns them would misreport a wiring fault as a servo fault.
 
@@ -125,9 +125,9 @@ Any result other than `STS_OK` or `STS_ERR_HARDWARE` on the final attempt increm
 
 ## Thread safety and bus synchronisation
 
-`sts_execute_command` is not thread-safe. It shares `tx_buf` and `rx_buf` across all servos on a bus with no locking, so two concurrent transactions on one bus will corrupt each other. The parser being stateless does not change this; the buffers are the shared resource.
+The command engine is not thread-safe. Its two entry points, `sts_execute_command` (writes) and `sts_execute_read` (reads and ping), share `tx_buf` and `rx_buf` across all servos on a bus with no locking, so two concurrent transactions on one bus will corrupt each other. The parser being stateless does not change this; the buffers are the shared resource.
 
-For an RTOS port, take a per-bus mutex around the transaction. The command engine is the single point through which every transaction passes and is the intended place for that lock.
+For an RTOS port, take a per-bus mutex in both entry points and hold it for the whole call. A read's retries and the bus counter updates must not interleave with another task's transaction, so locking around a single attempt is not enough.
 
 The STM32 port additionally keeps its UART state in file-scope statics, so it supports exactly one bus instance. A port supporting several buses must move that state into a per-bus context reached through `port_handle`.
 
@@ -135,8 +135,8 @@ The STM32 port additionally keeps its UART state in file-scope statics, so it su
 
 1. **Configure the UART**: 1 Mbaud, 8 data bits, no parity, 1 stop bit. Confirm the baud rate error at your clock is within tolerance before suspecting the driver.
 2. **Implement `transmit` and `receive`.** Start with the simplest blocking implementation; correctness first, DMA later.
-3. **Implement `flush_rx`** if your peripheral latches error flags that survive an aborted read. It is called before each retry.
-4. **Wire up the bus** as shown above, with `max_retries = 0` initially so failures surface immediately rather than being masked by retries.
+3. **Implement `flush_rx`** if your peripheral latches error flags that survive an aborted read. It is called before each read retry and after an unexpected response length.
+4. **Wire up the bus** as shown above, with `max_read_retries = 0` initially so failures surface immediately rather than being masked by retries.
 5. **Ping a known ID.** `STS_servo_ping` is the smallest complete transaction: it exercises framing, transmit, both receive stages, and parsing. Treat only `STS_OK` or `STS_ERR_HARDWARE` as a confirmed response from that servo; `STS_ERR_HARDWARE` still counts, because the servo answered and merely reported an internal fault.
-6. **Scan for the servo** with `STS_Bus_Scan` if the ID is unknown. It pings each ID in a range and stops at the first `STS_OK` or `STS_ERR_HARDWARE`. A header, ID, checksum or length error shows that bytes arrived but not a valid reply from that ID, so the scan flushes and pings that ID once more before moving on. `STS_ERR_RX_FAIL` gets the same second ping, because on the STM32 port it also means a short or noise-corrupted arrival. `STS_ERR_TX_FAIL`, `STS_ERR_BUSY` and `STS_ERR_NULL_PTR` never count as a hit and are not re-pinged. Keep `max_retries` at 0 while scanning, since every absent ID costs one receive timeout per attempt, and log each ping through the callback during bring-up.
+6. **Scan for the servo** with `STS_Bus_Scan` if the ID is unknown. It pings each ID in a range once and stops at the first `STS_OK` or `STS_ERR_HARDWARE`. A ping is a read, so it is retried up to `max_read_retries` times, and the callback receives each ID's final result. With 0, a noise burst on the only reply hides that servo; with 1, as the example app uses, every absent ID costs two receive timeouts. No other result counts as a hit. Log each ping through the callback during bring-up.
 7. **Run the integration suite** (`STS_RunIntegrationTests`) once single transactions work, then a stress campaign. Note that the suite currently calls the STM32 HAL for its timing, so reusing it on another MCU means substituting those calls first. Watch `total_retries` and `hard_failures` rather than only the pass and fail counts: a port that works but retries constantly is a port with a marginal turnaround.

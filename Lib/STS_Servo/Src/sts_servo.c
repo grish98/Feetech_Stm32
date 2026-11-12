@@ -15,13 +15,14 @@
  * - Servo Handle: STS_Servo_Init binds a servo ID to a bus and initialises
  *   online state to offline.
  *
- * - Command Engine: sts_execute_command (STATIC_TESTABLE) is the single
- *   transaction path — handles framing, TX, and a two-stage receive. Stage 1
- *   reads the fixed header to extract the packet length field. Stage 2 reads
- *   the remaining payload. If 4 + the length field differs from
+ * - Command Engine: one attempt handles framing, TX, and a two-stage receive.
+ *   Stage 1 reads the fixed header to extract the packet length field. Stage 2
+ *   reads the remaining payload. If 4 + the length field differs from
  *   cmd->expected_rx_len or exceeds the RX buffer, the attempt fails as
  *   STS_ERR_MALFORMED before Stage 2.
  *   Broadcast IDs and expected_rx_len == 0 skip the receive entirely.
+ *   Writes make one attempt (sts_execute_command); reads and ping retry up to
+ *   max_read_retries times (sts_execute_read).
  *
  * - Ping: STS_servo_ping issues a PING instruction and updates is_online,
  *   distinguishing communication failures from servo hardware errors.
@@ -77,18 +78,80 @@ sts_result_t STS_Bus_FlushRx(sts_bus_t *bus) {
     return bus->flush_rx(bus);
 }
 
+/* Validates the command and frames it into tx_buf; nothing is sent or counted. */
+static sts_result_t sts_prepare(sts_servo_t *servo, const sts_cmd_t *cmd, uint16_t *tx_len) {
+    if (servo == NULL || cmd == NULL || servo->bus == NULL) {
+        return STS_ERR_NULL_PTR;
+    }
+
+    /* max_read_retries + 1 must fit the 8-bit attempt count; 255 would wrap to 0 attempts. */
+    if (servo->bus->max_read_retries > STS_MAX_READ_RETRIES) {
+        return STS_ERR_INVALID_PARAM;
+    }
+
+    if (cmd->tx_param_len > (STS_MAX_TX_BUFFER - STS_MIN_PACKET_SIZE)) {
+        return STS_ERR_BUF_TOO_SMALL;
+    }
+
+    *tx_len = (uint16_t)STS_MIN_PACKET_SIZE + cmd->tx_param_len;
+    (void)memset(servo->bus->tx_buf, 0, STS_MAX_TX_BUFFER);
+    return sts_create_packet(servo->id, cmd->instruction, cmd->tx_params,
+                             cmd->tx_param_len, servo->bus->tx_buf, STS_MAX_TX_BUFFER);
+}
+
+/* One attempt: transmit the framed packet, then the two-stage receive and parse. Counts nothing. */
+static sts_result_t sts_attempt(sts_servo_t *servo, const sts_cmd_t *cmd, uint16_t tx_len) {
+    static uint8_t trash_bin[STS_MAX_RX_BUFFER];
+    static uint16_t dummy_len;
+    uint8_t *rx_buf = servo->bus->rx_buf;
+
+    sts_result_t res = STS_Bus_Transmit(servo->bus, servo->bus->tx_buf, tx_len);
+    if (res != STS_OK) return res;
+
+    if (servo->id >= STS_ID_BROADCAST_SYNC || cmd->expected_rx_len == 0U) {
+        return STS_OK;
+    }
+
+    (void)memset(rx_buf, 0, STS_MAX_RX_BUFFER);
+
+    res = STS_Bus_Receive(servo->bus, rx_buf, STS_PKT_FIXED_TOTAL, cmd->timeout_ms);
+    if (res != STS_OK) return res;
+
+    uint8_t  packet_len_field    = rx_buf[STS_IDX_LENGTH];
+    uint16_t total_expected_size = (uint16_t)STS_PKT_FIXED_TOTAL + (uint16_t)packet_len_field;
+
+    /* Too long for rx_buf is malformed, like any unexpected length. */
+    if (total_expected_size > STS_MAX_RX_BUFFER || total_expected_size != cmd->expected_rx_len) {
+        STS_Bus_FlushRx(servo->bus);
+        return STS_ERR_MALFORMED;
+    }
+
+    res = STS_Bus_Receive(servo->bus, &rx_buf[STS_PKT_FIXED_TOTAL],
+                          (uint16_t)packet_len_field, cmd->timeout_ms);
+    if (res != STS_OK) return res;
+
+    uint8_t  *safe_out  = (cmd->rx_params_out    != NULL) ? cmd->rx_params_out    : trash_bin;
+    uint16_t  safe_size = (cmd->rx_params_out    != NULL) ? cmd->rx_params_size   : (uint16_t)sizeof(trash_bin);
+    uint16_t *safe_len  = (cmd->rx_param_len_out != NULL) ? cmd->rx_param_len_out : &dummy_len;
+
+    return sts_parse_response(servo->id, rx_buf, total_expected_size, safe_out, safe_size, safe_len);
+}
+
 /**
- * @brief  Single transaction path for all STS servo commands.
+ * @brief  Single-attempt transaction path, used by every write.
  *
  * @details
- * Frames and transmits a command packet, then performs a two-stage receive:
+ * Frames and transmits a command packet once, then performs a two-stage receive:
  * Stage 1 reads the fixed header to extract the packet length field.
  * Stage 2 reads the remaining payload. If 4 + the length field differs from
  * cmd->expected_rx_len or exceeds the RX buffer, the attempt is
- * STS_ERR_MALFORMED: flushed, retried, counted. Skips RX entirely on broadcast
- * IDs or expected_rx_len == 0.
+ * STS_ERR_MALFORMED and the RX buffer is flushed. Skips RX entirely on broadcast
+ * IDs or expected_rx_len == 0. Never retries. If the command was sent and the
+ * call fails, the outcome is unknown; argument errors send nothing. Read-back
+ * advice: see sts_servo_cmd.h.
  *
- * @note Not thread-safe. Add mutex protection here for RTOS support.
+ * @note Not thread-safe. For RTOS support, take the per-bus mutex here and in
+ *       sts_execute_read, and hold it for the whole call, counter updates included.
  *
  * @param  servo  Pointer to an initialised servo handle.
  * @param  cmd    Pointer to the command configuration struct.
@@ -96,84 +159,58 @@ sts_result_t STS_Bus_FlushRx(sts_bus_t *bus) {
  * @return STS_OK or specific error code
  */
 STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_cmd_t *cmd) {
-    if (servo == NULL || cmd == NULL || servo->bus == NULL) {
-        return STS_ERR_NULL_PTR;
-    }
-
-    /* max_retries + 1 must fit the 8-bit attempt count; 255 would wrap to 0 attempts. */
-    if (servo->bus->max_retries > STS_MAX_RETRIES) {
-        return STS_ERR_INVALID_PARAM;
-    }
-
-    uint8_t *tx_buf = servo->bus->tx_buf;
-    uint8_t *rx_buf = servo->bus->rx_buf;
-
-    uint16_t total_tx_len = (uint16_t)STS_MIN_PACKET_SIZE + cmd->tx_param_len;
-
-    if (cmd->tx_param_len > (STS_MAX_TX_BUFFER - STS_MIN_PACKET_SIZE)) {
-        return STS_ERR_BUF_TOO_SMALL;
-    }
-
-    (void)memset(tx_buf, 0, STS_MAX_TX_BUFFER);
-    sts_result_t res = sts_create_packet(servo->id, cmd->instruction, cmd->tx_params,
-                                         cmd->tx_param_len, tx_buf, STS_MAX_TX_BUFFER);
+    uint16_t tx_len = 0U;
+    sts_result_t res = sts_prepare(servo, cmd, &tx_len);
     if (res != STS_OK) return res;
 
-    static uint8_t trash_bin[STS_MAX_RX_BUFFER];
-    static uint16_t dummy_len;
+    servo->bus->total_transactions++;
+    res = sts_attempt(servo, cmd, tx_len);
+
+    if (res != STS_OK && res != STS_ERR_HARDWARE) {
+        servo->bus->hard_failures++;
+    }
+    return res;
+}
+
+/* A caller error repeats on every attempt, so it ends the retries. */
+static uint8_t sts_is_caller_error(sts_result_t res) {
+    return (res == STS_ERR_BUF_TOO_SMALL || res == STS_ERR_INVALID_PARAM || res == STS_ERR_NULL_PTR) ? 1U : 0U;
+}
+
+/**
+ * @brief  Transaction path for reads and ping: up to max_read_retries + 1 attempts.
+ *
+ * @details
+ * Each attempt after the first flushes the RX buffer and resends the same packet.
+ * Stops at STS_OK, STS_ERR_HARDWARE or a caller error; returns the last attempt's code.
+ *
+ * @note Not thread-safe. For RTOS support, hold the per-bus mutex for the whole call,
+ *       retries and counter updates included.
+ *
+ * @param  servo  Pointer to an initialised servo handle.
+ * @param  cmd    Pointer to the command configuration struct.
+ *
+ * @return STS_OK or specific error code
+ */
+STATIC_TESTABLE sts_result_t sts_execute_read(sts_servo_t *servo, const sts_cmd_t *cmd) {
+    uint16_t tx_len = 0U;
+    sts_result_t res = sts_prepare(servo, cmd, &tx_len);
+    if (res != STS_OK) return res;
 
     servo->bus->total_transactions++;
-    uint8_t needed_retry = 0U;
-
-    uint8_t max_attempts = servo->bus->max_retries + 1U;
+    uint8_t max_attempts = servo->bus->max_read_retries + 1U;
 
     for (uint8_t attempt = 0U; attempt < max_attempts; attempt++) {
-
         if (attempt > 0U) {
             servo->bus->total_retries++;
-            needed_retry = 1U;
             STS_Bus_FlushRx(servo->bus);
         }
 
-        res = STS_Bus_Transmit(servo->bus, tx_buf, total_tx_len);
-        if (res != STS_OK) continue;
-
-        if (servo->id >= STS_ID_BROADCAST_SYNC || cmd->expected_rx_len == 0U) {
-            if (needed_retry) {
-                servo->bus->retry_saves++;
-            }
-            return STS_OK;
-        }
-
-        (void)memset(rx_buf, 0, STS_MAX_RX_BUFFER);
-
-        res = STS_Bus_Receive(servo->bus, rx_buf, STS_PKT_FIXED_TOTAL, cmd->timeout_ms);
-        if (res != STS_OK) continue;
-
-        uint8_t  packet_len_field   = rx_buf[STS_IDX_LENGTH];
-        uint16_t total_expected_size = (uint16_t)STS_PKT_FIXED_TOTAL + (uint16_t)packet_len_field;
-
-        /* Too long for rx_buf is malformed, like any unexpected length. */
-        if (total_expected_size > STS_MAX_RX_BUFFER || total_expected_size != cmd->expected_rx_len) {
-            res = STS_ERR_MALFORMED;
-            STS_Bus_FlushRx(servo->bus);
-            continue;
-        }
-
-        res = STS_Bus_Receive(servo->bus, &rx_buf[STS_PKT_FIXED_TOTAL],
-                              (uint16_t)packet_len_field, cmd->timeout_ms);
-        if (res != STS_OK) continue;
-
-        uint8_t  *safe_out  = (cmd->rx_params_out    != NULL) ? cmd->rx_params_out    : trash_bin;
-        uint16_t  safe_size = (cmd->rx_params_out    != NULL) ? cmd->rx_params_size   : (uint16_t)sizeof(trash_bin);
-        uint16_t *safe_len  = (cmd->rx_param_len_out != NULL) ? cmd->rx_param_len_out : &dummy_len;
-
-        res = sts_parse_response(servo->id, rx_buf, total_expected_size,
-                                 safe_out, safe_size, safe_len);
+        res = sts_attempt(servo, cmd, tx_len);
 
         /* Hardware error is a definitive servo response — do not retry. */
-        if (res == STS_OK || res == STS_ERR_HARDWARE) {
-            if (needed_retry && res == STS_OK) {
+        if (res == STS_OK || res == STS_ERR_HARDWARE || sts_is_caller_error(res) != 0U) {
+            if (res == STS_OK && attempt > 0U) {
                 servo->bus->retry_saves++;
             }
             break;
@@ -183,7 +220,6 @@ STATIC_TESTABLE sts_result_t sts_execute_command(sts_servo_t *servo, const sts_c
     if (res != STS_OK && res != STS_ERR_HARDWARE) {
         servo->bus->hard_failures++;
     }
-
     return res;
 }
 
@@ -241,7 +277,7 @@ sts_result_t STS_servo_ping(sts_servo_t *servo) {
         .timeout_ms      = STS_DEFAULT_TIMEOUT_MS
     };
 
-    sts_result_t res = sts_execute_command(servo, &cmd);
+    sts_result_t res = sts_execute_read(servo, &cmd);
 
  if (res == STS_OK || res == STS_ERR_HARDWARE){ 
         servo->is_online = STS_ONLINE;
@@ -249,12 +285,6 @@ sts_result_t STS_servo_ping(sts_servo_t *servo) {
         servo->is_online = STS_OFFLINE;
     }
     return res;
-}
-
-/* Corrupted, short or noisy reply rather than silence: worth one more ping. */
-static uint8_t sts_scan_worth_reping(sts_result_t res) {
-    return (res == STS_ERR_HEADER    || res == STS_ERR_ID_MISMATCH || res == STS_ERR_CHECKSUM ||
-            res == STS_ERR_MALFORMED || res == STS_ERR_RX_FAIL) ? 1U : 0U;
 }
 
 sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
@@ -266,7 +296,6 @@ sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
         return STS_ERR_INVALID_PARAM;
     }
 
-    const uint8_t pings_per_id = 2U;
     sts_result_t  miss = STS_ERR_TIMEOUT;
     sts_servo_t   probe;
 
@@ -274,26 +303,17 @@ sts_result_t STS_Bus_Scan(sts_bus_t *bus, uint8_t first_id, uint8_t last_id,
     for (uint16_t id = first_id; id <= last_id; id++) {
         (void)STS_Servo_Init(&probe, bus, (uint8_t)id);
 
-        for (uint8_t attempt = 0U; attempt < pings_per_id; attempt++) {
-            if (attempt > 0U) {
-                (void)STS_Bus_FlushRx(bus);
-            }
+        sts_result_t res = STS_servo_ping(&probe);
+        if (on_ping != NULL) {
+            on_ping((uint8_t)id, res, ctx);
+        }
 
-            sts_result_t res = STS_servo_ping(&probe);
-            if (on_ping != NULL) {
-                on_ping((uint8_t)id, attempt, res, ctx);
-            }
-
-            if (res == STS_OK || res == STS_ERR_HARDWARE) {
-                *found_id = (uint8_t)id;
-                return STS_OK;
-            }
-            if (res != STS_ERR_TIMEOUT) {
-                miss = res;
-            }
-            if (sts_scan_worth_reping(res) == 0U) {
-                break;
-            }
+        if (res == STS_OK || res == STS_ERR_HARDWARE) {
+            *found_id = (uint8_t)id;
+            return STS_OK;
+        }
+        if (res != STS_ERR_TIMEOUT) {
+            miss = res;
         }
     }
     return miss;
@@ -363,7 +383,7 @@ sts_result_t STS_Read8(sts_servo_t *servo, uint8_t reg_addr, uint8_t *value_out)
         .timeout_ms      = STS_DEFAULT_TIMEOUT_MS
     };
 
-    sts_result_t res = sts_execute_command(servo, &cmd);
+    sts_result_t res = sts_execute_read(servo, &cmd);
     
     if (res == STS_OK && rx_len == STS_DATA_LEN_8BIT) {
         *value_out = rx_data[0];
@@ -394,7 +414,7 @@ sts_result_t STS_Read16(sts_servo_t *servo, uint8_t reg_addr, uint16_t *value_ou
         .timeout_ms      = STS_DEFAULT_TIMEOUT_MS
     };
 
-    sts_result_t res = sts_execute_command(servo, &cmd);
+    sts_result_t res = sts_execute_read(servo, &cmd);
     
     if (res == STS_OK && rx_len == STS_DATA_LEN_16BIT) {
         *value_out = (uint16_t)(rx_data[0] | (rx_data[1] << 8U)); 

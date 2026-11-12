@@ -118,7 +118,7 @@ void TEST_ASSERT_BUFFER_UNCHANGED(const uint8_t *buffer, size_t size, uint8_t ex
  * ========================================================================== */
 #define MOCK_SCRIPT_QUEUE_SIZE  256U
 #define MOCK_SCRIPT_PACKET_MAX  STS_MAX_TX_BUFFER  /* Longest packet the engine can send */
-#define MOCK_SCRIPT_TX_MAX      300U  /* More transmits than one call can make: max_retries is a uint8_t */
+#define MOCK_SCRIPT_TX_MAX      300U  /* More transmits than one call can make: max_read_retries is a uint8_t */
 
 /* Reasons passed to on_fail */
 #define MOCK_SCRIPT_FAIL_CAP    "Scripted transport (test_sts_utils.c): transmit cap exceeded"

@@ -2777,7 +2777,6 @@ void test_Mock_Script_Flush_Null_Arguments(void) {
 
 typedef struct {
     uint8_t      id;
-    uint8_t      attempt;
     sts_result_t result;
 } scan_entry_t;
 
@@ -2790,11 +2789,10 @@ static scan_log_t scan_log;
 static uint8_t scan_found;
 static uint8_t scan_replies[SCAN_REPLY_SLOTS][EXPECTED_READ8_ACK_LEN];
 
-static void scan_record(uint8_t id, uint8_t attempt, sts_result_t result, void *ctx) {
+static void scan_record(uint8_t id, sts_result_t result, void *ctx) {
     scan_log_t *log = (scan_log_t *)ctx;
     TEST_ASSERT_TRUE_MESSAGE(log->count < SCAN_LOG_MAX, "Scan callback log full");
     log->entry[log->count].id      = id;
-    log->entry[log->count].attempt = attempt;
     log->entry[log->count].result  = result;
     log->count++;
 }
@@ -2851,7 +2849,6 @@ static void assert_scan(sts_result_t actual, sts_result_t expected, uint8_t expe
     TEST_ASSERT_EQUAL_UINT32(log_count, scan_log.count);
     for (uint32_t i = 0U; i < log_count; i++) {
         TEST_ASSERT_EQUAL_UINT8_MESSAGE(log[i].id, scan_log.entry[i].id, "callback id");
-        TEST_ASSERT_EQUAL_UINT8_MESSAGE(log[i].attempt, scan_log.entry[i].attempt, "callback attempt");
         TEST_ASSERT_EQUAL_INT_MESSAGE(log[i].result, scan_log.entry[i].result, "callback result");
     }
 
@@ -2883,7 +2880,7 @@ static void assert_scan_rejected(sts_bus_t *bus, uint8_t first_id, uint8_t last_
 
 void test_STS_Bus_Scan_Finds_Responding_Servo(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_OK} };
+    const scan_entry_t log[] = { {1U, STS_OK} };
     const uint8_t pinged[] = {1U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -2892,7 +2889,7 @@ void test_STS_Bus_Scan_Finds_Responding_Servo(void) {
 
 void test_STS_Bus_Scan_Hardware_Error_Counts_As_Found(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 1U, STS_BIT_ERR_OVERHEAT), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_HARDWARE} };
+    const scan_entry_t log[] = { {1U, STS_ERR_HARDWARE} };
     const uint8_t pinged[] = {1U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -2900,7 +2897,7 @@ void test_STS_Bus_Scan_Hardware_Error_Counts_As_Found(void) {
 }
 
 void test_STS_Bus_Scan_All_Silent_Returns_Timeout(void) {
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TIMEOUT}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_ERR_TIMEOUT}, {3U, STS_ERR_TIMEOUT} };
     const uint8_t pinged[] = {1U, 2U, 3U};
     use_scan(NULL, 0U);
 
@@ -2908,10 +2905,10 @@ void test_STS_Bus_Scan_All_Silent_Returns_Timeout(void) {
                 log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
 }
 
-/* A transmit fault is final for that ID: no re-ping, and the scan moves on. */
+/* A transmit fault is final for that ID: the scan moves on. */
 static void check_transmit_fault_skipped(sts_result_t fault) {
     const mock_step_t steps[] = { SCAN_TX_FAILS(fault), SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, fault}, {2U, 0U, STS_OK} };
+    const scan_entry_t log[] = { {1U, fault}, {2U, STS_OK} };
     const uint8_t pinged[] = {1U, 2U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -2934,73 +2931,69 @@ void test_STS_Bus_Scan_Skips_Buffer_Size_Error(void) {
     check_transmit_fault_skipped(STS_ERR_BUF_TOO_SMALL);
 }
 
-void test_STS_Bus_Scan_Repings_After_Receive_Failure(void) {
-    const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_RX_FAIL}, {1U, 1U, STS_ERR_TIMEOUT}, {2U, 0U, STS_OK} };
-    const uint8_t pinged[] = {1U, 1U, 2U};
+/* A receive failure is final for that ID when no read retry is left. */
+void test_STS_Bus_Scan_Receive_Failure_Moves_On(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_ack(0U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, STS_ERR_RX_FAIL}, {2U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U};
     use_scan(steps, SCAN_LEN(steps));
     script.rx_fail_call   = 1U;
     script.rx_fail_result = STS_ERR_RX_FAIL;
 
-    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
 }
 
-/* A noise burst on the only servo's first reply: the re-ping finds it. */
-void test_STS_Bus_Scan_Reping_Recovers_Noisy_Reply(void) {
+/* A noise burst on the only servo's first reply: the read retry finds it. */
+void test_STS_Bus_Scan_Read_Retry_Recovers_Noisy_Reply(void) {
     const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_ack(0U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_RX_FAIL}, {1U, 1U, STS_OK} };
+    const scan_entry_t log[] = { {1U, STS_OK} };
     const uint8_t pinged[] = {1U, 1U};
     use_scan(steps, SCAN_LEN(steps));
+    test_bus.max_read_retries = 1U;
     script.rx_fail_call   = 1U;
     script.rx_fail_result = STS_ERR_RX_FAIL;
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
 }
 
-/* A protocol error is re-pinged once after a flush; a lost re-ping moves the scan on. */
-static void check_protocol_error_repinged(const uint8_t *bad_reply, uint16_t bad_len, sts_result_t error,
+/* Without read retries a protocol error is final for that ID; the scan moves on. */
+static void check_protocol_error_moves_on(const uint8_t *bad_reply, uint16_t bad_len, sts_result_t error,
                                           uint32_t flushes) {
-    const mock_step_t steps[] = { SCAN_REPLY(bad_reply, bad_len), SCAN_LOST,
+    const mock_step_t steps[] = { SCAN_REPLY(bad_reply, bad_len),
                                   SCAN_REPLY(scan_ack(1U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, error}, {1U, 1U, STS_ERR_TIMEOUT}, {2U, 0U, STS_OK} };
-    const uint8_t pinged[] = {1U, 1U, 2U};
+    const scan_entry_t log[] = { {1U, error}, {2U, STS_OK} };
+    const uint8_t pinged[] = {1U, 2U};
     use_scan(steps, SCAN_LEN(steps));
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), flushes);
 }
 
-void test_STS_Bus_Scan_Repings_After_Header_Error(void) {
-    check_protocol_error_repinged(scan_bad_header(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_HEADER, 1U);
+void test_STS_Bus_Scan_Header_Error_Moves_On(void) {
+    check_protocol_error_moves_on(scan_bad_header(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_HEADER, 0U);
 }
 
-void test_STS_Bus_Scan_Repings_After_Id_Mismatch(void) {
-    check_protocol_error_repinged(scan_ack(0U, SCAN_FOREIGN_ID, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN,
-                                  STS_ERR_ID_MISMATCH, 1U);
+void test_STS_Bus_Scan_Id_Mismatch_Moves_On(void) {
+    check_protocol_error_moves_on(scan_ack(0U, SCAN_FOREIGN_ID, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN,
+                                  STS_ERR_ID_MISMATCH, 0U);
 }
 
-void test_STS_Bus_Scan_Repings_After_Checksum_Error(void) {
-    check_protocol_error_repinged(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_CHECKSUM, 1U);
+void test_STS_Bus_Scan_Checksum_Error_Moves_On(void) {
+    check_protocol_error_moves_on(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_CHECKSUM, 0U);
 }
 
-void test_STS_Bus_Scan_Repings_After_Malformed_Reply(void) {
-    /* The engine flushes on the length mismatch as well, so two flushes. */
-    check_protocol_error_repinged(scan_wrong_length(0U, 1U), EXPECTED_READ8_ACK_LEN, STS_ERR_MALFORMED, 2U);
+void test_STS_Bus_Scan_Malformed_Reply_Moves_On(void) {
+    /* The engine flushes on the length mismatch. */
+    check_protocol_error_moves_on(scan_wrong_length(0U, 1U), EXPECTED_READ8_ACK_LEN, STS_ERR_MALFORMED, 1U);
 }
 
-void test_STS_Bus_Scan_Repings_After_Oversize_Reply(void) {
-    const mock_step_t steps[] = { SCAN_REPLY(scan_oversize(0U, 1U), EXPECTED_WRITE_ACK_LEN),
-                                  SCAN_REPLY(scan_ack(1U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_MALFORMED}, {1U, 1U, STS_OK} };
-    const uint8_t pinged[] = {1U, 1U};
-    use_scan(steps, SCAN_LEN(steps));
-
-    /* The engine flushes the malformed reply, then the scan flushes before the re-ping. */
-    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 2U);
+void test_STS_Bus_Scan_Oversize_Reply_Moves_On(void) {
+    /* The engine flushes the malformed reply. */
+    check_protocol_error_moves_on(scan_oversize(0U, 1U), EXPECTED_WRITE_ACK_LEN, STS_ERR_MALFORMED, 1U);
 }
 
 void test_STS_Bus_Scan_Stops_At_First_Responder(void) {
     const mock_step_t steps[] = { SCAN_LOST, SCAN_LOST, SCAN_REPLY(scan_ack(0U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TIMEOUT}, {3U, 0U, STS_OK} };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_ERR_TIMEOUT}, {3U, STS_OK} };
     const uint8_t pinged[] = {1U, 2U, 3U};
     const uint8_t ping_1[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, 0x01U, EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xFBU};
     const uint8_t ping_2[] = {EXPECTED_HEADER_BYTE, EXPECTED_HEADER_BYTE, 0x02U, EXPECTED_PING_LEN_BYTE, EXPECTED_INST_PING, 0xFAU};
@@ -3013,46 +3006,58 @@ void test_STS_Bus_Scan_Stops_At_First_Responder(void) {
     TEST_ASSERT_EQUAL_HEX8_ARRAY(ping_3, script.tx_log[2], sizeof(ping_3));
 }
 
-void test_STS_Bus_Scan_Reping_Recovers_Corrupted_Reply(void) {
-    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN),
-                                  SCAN_REPLY(scan_ack(1U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM}, {2U, 1U, STS_OK} };
-    const uint8_t pinged[] = {1U, 2U, 2U};
+void test_STS_Bus_Scan_Read_Retry_Recovers_Checksum_Error(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_ack(1U, 1U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U};
     use_scan(steps, SCAN_LEN(steps));
+    test_bus.max_read_retries = 1U;
+
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 1U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.total_transactions);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.total_retries);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.retry_saves);
+    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.hard_failures);
+}
+
+void test_STS_Bus_Scan_Moves_On_After_Retry_Also_Corrupted(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_bad_checksum(1U, 1U), EXPECTED_WRITE_ACK_LEN),
+                                  SCAN_REPLY(scan_ack(2U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, STS_ERR_CHECKSUM}, {2U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U, 2U};
+    use_scan(steps, SCAN_LEN(steps));
+    test_bus.max_read_retries = 1U;
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
-    TEST_ASSERT_EQUAL_UINT32(3U, test_bus.total_transactions);
-    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.total_retries);
-    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.retry_saves);
-    TEST_ASSERT_EQUAL_UINT32(2U, test_bus.hard_failures);
 }
 
-void test_STS_Bus_Scan_Moves_On_After_Two_Corrupted_Replies(void) {
-    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN),
-                                  SCAN_REPLY(scan_bad_checksum(1U, 2U), EXPECTED_WRITE_ACK_LEN),
-                                  SCAN_REPLY(scan_ack(2U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
-                                 {2U, 1U, STS_ERR_CHECKSUM}, {3U, 0U, STS_OK} };
-    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
+/* The ping's final result is reported: a corrupted reply then a lost retry shows as a timeout. */
+void test_STS_Bus_Scan_Lost_Retry_Reports_Timeout(void) {
+    const mock_step_t steps[] = { SCAN_REPLY(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST,
+                                  SCAN_REPLY(scan_ack(1U, 2U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_OK} };
+    const uint8_t pinged[] = {1U, 1U, 2U};
     use_scan(steps, SCAN_LEN(steps));
+    test_bus.max_read_retries = 1U;
 
-    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 3U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 2U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
 }
 
-void test_STS_Bus_Scan_Moves_On_When_Reping_Is_Lost(void) {
-    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST,
-                                  SCAN_REPLY(scan_ack(1U, 3U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
-                                 {2U, 1U, STS_ERR_TIMEOUT}, {3U, 0U, STS_OK} };
-    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
-    use_scan(steps, SCAN_LEN(steps));
+void test_STS_Bus_Scan_Read_Retry_All_Silent(void) {
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_ERR_TIMEOUT}, {3U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 1U, 2U, 2U, 3U, 3U};
+    use_scan(NULL, 0U);
+    test_bus.max_read_retries = 1U;
 
-    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_OK, 3U, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+    assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_TIMEOUT, SCAN_FOUND_SENTINEL,
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 3U);
 }
 
 void test_STS_Bus_Scan_Miss_Reports_Local_Fault(void) {
     const mock_step_t steps[] = { SCAN_LOST, SCAN_TX_FAILS(STS_ERR_TX_FAIL), SCAN_LOST };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_TX_FAIL}, {3U, 0U, STS_ERR_TIMEOUT} };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_ERR_TX_FAIL}, {3U, STS_ERR_TIMEOUT} };
     const uint8_t pinged[] = {1U, 2U, 3U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -3060,28 +3065,25 @@ void test_STS_Bus_Scan_Miss_Reports_Local_Fault(void) {
                 log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
 }
 
-void test_STS_Bus_Scan_Miss_Reports_Corrupted_First_Ping(void) {
-    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST, SCAN_LOST };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT}, {2U, 0U, STS_ERR_CHECKSUM},
-                                 {2U, 1U, STS_ERR_TIMEOUT}, {3U, 0U, STS_ERR_TIMEOUT} };
-    const uint8_t pinged[] = {1U, 2U, 2U, 3U};
+void test_STS_Bus_Scan_Miss_Reports_Corrupted_Ping(void) {
+    const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_bad_checksum(0U, 2U), EXPECTED_WRITE_ACK_LEN), SCAN_LOST };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT}, {2U, STS_ERR_CHECKSUM}, {3U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 2U, 3U};
     use_scan(steps, SCAN_LEN(steps));
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_CHECKSUM, SCAN_FOUND_SENTINEL,
-                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
 }
 
 void test_STS_Bus_Scan_Miss_Reports_Last_Error(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_bad_checksum(0U, 1U), EXPECTED_WRITE_ACK_LEN),
-                                  SCAN_REPLY(scan_bad_checksum(1U, 1U), EXPECTED_WRITE_ACK_LEN),
                                   SCAN_TX_FAILS(STS_ERR_TX_FAIL), SCAN_LOST };
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_CHECKSUM}, {1U, 1U, STS_ERR_CHECKSUM},
-                                 {2U, 0U, STS_ERR_TX_FAIL}, {3U, 0U, STS_ERR_TIMEOUT} };
-    const uint8_t pinged[] = {1U, 1U, 2U, 3U};
+    const scan_entry_t log[] = { {1U, STS_ERR_CHECKSUM}, {2U, STS_ERR_TX_FAIL}, {3U, STS_ERR_TIMEOUT} };
+    const uint8_t pinged[] = {1U, 2U, 3U};
     use_scan(steps, SCAN_LEN(steps));
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_TX_FAIL, SCAN_FOUND_SENTINEL,
-                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 1U);
+                log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 0U);
 }
 
 void test_STS_Bus_Scan_Without_Callback(void) {
@@ -3132,7 +3134,7 @@ void test_STS_Bus_Scan_Last_Id_255_Rejected(void) {
 
 void test_STS_Bus_Scan_Single_Id_Range(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 5U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {5U, 0U, STS_OK} };
+    const scan_entry_t log[] = { {5U, STS_OK} };
     const uint8_t pinged[] = {5U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -3141,7 +3143,7 @@ void test_STS_Bus_Scan_Single_Id_Range(void) {
 
 void test_STS_Bus_Scan_Includes_Id_Zero(void) {
     const mock_step_t steps[] = { SCAN_REPLY(scan_ack(0U, 0U, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {0U, 0U, STS_OK} };
+    const scan_entry_t log[] = { {0U, STS_OK} };
     const uint8_t pinged[] = {0U};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -3150,7 +3152,7 @@ void test_STS_Bus_Scan_Includes_Id_Zero(void) {
 
 void test_STS_Bus_Scan_Reaches_Id_253(void) {
     const mock_step_t steps[] = { SCAN_LOST, SCAN_REPLY(scan_ack(0U, SCAN_MAX_UNICAST_ID, STS_STATUS_OK), EXPECTED_WRITE_ACK_LEN) };
-    const scan_entry_t log[] = { {SCAN_MAX_UNICAST_ID - 1U, 0U, STS_ERR_TIMEOUT}, {SCAN_MAX_UNICAST_ID, 0U, STS_OK} };
+    const scan_entry_t log[] = { {SCAN_MAX_UNICAST_ID - 1U, STS_ERR_TIMEOUT}, {SCAN_MAX_UNICAST_ID, STS_OK} };
     const uint8_t pinged[] = {SCAN_MAX_UNICAST_ID - 1U, SCAN_MAX_UNICAST_ID};
     use_scan(steps, SCAN_LEN(steps));
 
@@ -3159,50 +3161,90 @@ void test_STS_Bus_Scan_Reaches_Id_253(void) {
 }
 
 void test_STS_Bus_Scan_Uses_Configured_Retries(void) {
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_TIMEOUT} };
+    const scan_entry_t log[] = { {1U, STS_ERR_TIMEOUT} };
     const uint8_t pinged[] = {1U, 1U, 1U};
     use_scan(NULL, 0U);
-    test_bus.max_retries = SCAN_RETRIES;
+    test_bus.max_read_retries = SCAN_RETRIES;
 
     /* Engine retries flush before each further attempt. */
     assert_scan(run_scan(1U, 1U), STS_ERR_TIMEOUT, SCAN_FOUND_SENTINEL, log, SCAN_LEN(log), pinged, SCAN_LEN(pinged), 2U);
-    TEST_ASSERT_EQUAL_UINT8(SCAN_RETRIES, test_bus.max_retries);
+    TEST_ASSERT_EQUAL_UINT8(SCAN_RETRIES, test_bus.max_read_retries);
 }
 
-/* --- Retry limit: the scan inherits it from the engine --- */
+/* --- Read retry limit: checked for every command --- */
 
 #define RETRIES_LIMIT_LITERAL       254U
 #define RETRIES_WRAPPING            255U
+#define LIMIT_TEST_STEPS            1000U
+#define LIMIT_TEST_SENTINEL         0xBEEFU
 
-void test_STS_Max_Retries_255_Rejected_Before_Sending(void) {
+void test_STS_Max_Read_Retries_255_Rejects_Writes(void) {
     use_scan(NULL, 0U);
-    test_bus.max_retries        = RETRIES_WRAPPING;
+    test_bus.max_read_retries   = RETRIES_WRAPPING;
     test_bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    test_bus.total_retries      = TEST_SEED_RETRIES;
+    test_bus.retry_saves        = TEST_SEED_RETRY_SAVES;
     test_bus.hard_failures      = TEST_SEED_HARD_FAILURES;
     sts_bus_t bus_snapshot;
     memcpy(&bus_snapshot, &test_bus, sizeof(sts_bus_t));
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_DISABLE));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_SetTargetStep(&test_servo, LIMIT_TEST_STEPS, STS_DIR_CW));
     TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
     TEST_ASSERT_STRUCT_UNCHANGED(&bus_snapshot, &test_bus, sts_bus_t);
 }
 
-void test_STS_Max_Retries_254_Makes_255_Attempts(void) {
+void test_STS_Max_Read_Retries_255_Rejects_Reads(void) {
     use_scan(NULL, 0U);
-    test_bus.max_retries = RETRIES_LIMIT_LITERAL;
+    test_bus.max_read_retries   = RETRIES_WRAPPING;
+    test_bus.total_transactions = TEST_SEED_TRANSACTIONS;
+    test_bus.total_retries      = TEST_SEED_RETRIES;
+    test_bus.retry_saves        = TEST_SEED_RETRY_SAVES;
+    test_bus.hard_failures      = TEST_SEED_HARD_FAILURES;
+    sts_bus_t bus_snapshot;
+    memcpy(&bus_snapshot, &test_bus, sizeof(sts_bus_t));
+    uint16_t pos = LIMIT_TEST_SENTINEL;
 
-    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_Write8(&test_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_DISABLE));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_GetPresentPosition(&test_servo, &pos));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_HEX16(LIMIT_TEST_SENTINEL, pos);
+    TEST_ASSERT_STRUCT_UNCHANGED(&bus_snapshot, &test_bus, sts_bus_t);
+}
+
+void test_STS_Max_Read_Retries_254_Read_Makes_255_Attempts(void) {
+    use_scan(NULL, 0U);
+    test_bus.max_read_retries = RETRIES_LIMIT_LITERAL;
+    uint16_t pos = 0U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_GetPresentPosition(&test_servo, &pos));
     TEST_ASSERT_EQUAL_UINT32(RETRIES_LIMIT_LITERAL + 1U, script.tx_count);
+    for (uint32_t i = 1U; i < script.tx_count; i++) {
+        TEST_ASSERT_EQUAL_UINT16(script.tx_log_len[0], script.tx_log_len[i]);
+        TEST_ASSERT_EQUAL_HEX8_ARRAY(script.tx_log[0], script.tx_log[i], script.tx_log_len[0]);
+    }
+    TEST_ASSERT_EQUAL_UINT32(RETRIES_LIMIT_LITERAL, script.flush_count);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.total_transactions);
     TEST_ASSERT_EQUAL_UINT32(RETRIES_LIMIT_LITERAL, test_bus.total_retries);
+    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.retry_saves);
+    TEST_ASSERT_EQUAL_UINT32(1U, test_bus.hard_failures);
+}
+
+void test_STS_Max_Read_Retries_254_Write_Makes_One_Attempt(void) {
+    use_scan(NULL, 0U);
+    test_bus.max_read_retries = RETRIES_LIMIT_LITERAL;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, STS_SetTargetStep(&test_servo, LIMIT_TEST_STEPS, STS_DIR_CW));
+    TEST_ASSERT_EQUAL_UINT32(1U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT32(0U, script.flush_count);
+    TEST_ASSERT_EQUAL_UINT32(0U, test_bus.total_retries);
     TEST_ASSERT_EQUAL_UINT32(1U, test_bus.hard_failures);
 }
 
 /* With 255 retries nothing is sent, so no ID may be reported found. */
-void test_STS_Bus_Scan_Max_Retries_255_Finds_Nothing(void) {
-    const scan_entry_t log[] = { {1U, 0U, STS_ERR_INVALID_PARAM}, {2U, 0U, STS_ERR_INVALID_PARAM},
-                                 {3U, 0U, STS_ERR_INVALID_PARAM} };
+void test_STS_Bus_Scan_Max_Read_Retries_255_Finds_Nothing(void) {
+    const scan_entry_t log[] = { {1U, STS_ERR_INVALID_PARAM}, {2U, STS_ERR_INVALID_PARAM},
+                                 {3U, STS_ERR_INVALID_PARAM} };
     use_scan(NULL, 0U);
-    test_bus.max_retries = RETRIES_WRAPPING;
+    test_bus.max_read_retries = RETRIES_WRAPPING;
 
     assert_scan(run_scan(SCAN_FIRST_ID, SCAN_LAST_ID), STS_ERR_INVALID_PARAM, SCAN_FOUND_SENTINEL,
                 log, SCAN_LEN(log), NULL, 0U, 0U);
@@ -3256,7 +3298,7 @@ static uint8_t           len_mismatch[EXPECTED_READ16_ACK_LEN];
 static uint8_t           len_reply[MOCK_SCRIPT_QUEUE_SIZE];
 
 /* Guarded bus on the scripted transport, counters seeded, position replies rebuilt. */
-static void use_len_bus(const mock_step_t *steps, uint16_t step_count, uint8_t max_retries) {
+static void use_len_bus(const mock_step_t *steps, uint16_t step_count, uint8_t read_retries) {
     const uint8_t pos[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
     simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, pos, STS_DATA_LEN_16BIT, len_valid);
     memcpy(len_oversize, len_valid, sizeof(len_valid));
@@ -3267,7 +3309,7 @@ static void use_len_bus(const mock_step_t *steps, uint16_t step_count, uint8_t m
     mock_script_reset(&script, steps, step_count);
     (void)STS_Bus_Init(&len_bus.bus, &script, mock_script_tx, mock_script_rx);
     len_bus.bus.flush_rx           = mock_script_flush;
-    len_bus.bus.max_retries        = max_retries;
+    len_bus.bus.max_read_retries   = read_retries;
     len_bus.bus.total_transactions = TEST_SEED_TRANSACTIONS;
     len_bus.bus.total_retries      = TEST_SEED_RETRIES;
     len_bus.bus.retry_saves        = TEST_SEED_RETRY_SAVES;
@@ -3464,16 +3506,16 @@ void test_STS_ExecuteCommand_Expected_Length_Below_Any_Reply(void) {
     assert_len_outcome(NULL, 0U, 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
 }
 
-/* No reply expected: a transmit that succeeds on a retry counts as a retry save. */
-void test_STS_Broadcast_Write_Retry_Save_Counted(void) {
+/* A broadcast write is a write: a transmit failure is final, even with retries configured. */
+void test_STS_Broadcast_Write_Transmit_Failure_Is_Final(void) {
     const mock_step_t steps[] = { {NULL, 0U, STS_ERR_TX_FAIL}, {NULL, 0U, STS_OK} };
     use_len_bus(steps, 2U, LEN_RETRIES);
     len_servo.id = STS_ID_BROADCAST_SYNC;
 
-    TEST_ASSERT_EQUAL_INT(STS_OK, STS_Write8(&len_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TX_FAIL, STS_Write8(&len_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
     TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
-    assert_len_outcome(len_broadcast_torque_on, sizeof(len_broadcast_torque_on), 2U, 1U,
-                       (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+    assert_len_outcome(len_broadcast_torque_on, sizeof(len_broadcast_torque_on), 1U, 0U,
+                       (len_counters_t){1U, 0U, 0U, 1U}, NULL);
 }
 
 void test_STS_Broadcast_Write_First_Attempt_No_Save(void) {
@@ -3485,4 +3527,487 @@ void test_STS_Broadcast_Write_First_Attempt_No_Save(void) {
     TEST_ASSERT_EQUAL_UINT32(0U, script.rx_count);
     assert_len_outcome(len_broadcast_torque_on, sizeof(len_broadcast_torque_on), 1U, 0U,
                        (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+/* ==========================================================================
+ * READ AND WRITE RETRIES
+ * ========================================================================== */
+
+#define RT_STEPS                    1000U
+#define RT_NEW_ID                   11U
+#define RT_FOREIGN_ID               20U
+#define RT_ACK_LEN_BYTE             0x02U     /* Length byte of a write acknowledgement */
+#define RT_LEN_BITS                 8U
+#define RT_STAGE1_ONLY              4U        /* Header, ID and length byte: a reply cut before stage 2 */
+#define RT_CORRUPT_BYTE             0xEEU
+
+/* SetTargetStep(1000, CW) to ID 10: WRITE16 0x2A, 1000 with the direction bit. */
+static const uint8_t rt_step_packet[] = {0xFFU, 0xFFU, 0x0AU, 0x05U, 0x03U, 0x2AU, 0xE8U, 0x83U, 0x58U};
+/* SetID(11) to ID 10: WRITE8 0x05. */
+static const uint8_t rt_set_id_packet[] = {0xFFU, 0xFFU, 0x0AU, 0x04U, 0x03U, 0x05U, 0x0BU, 0xDEU};
+
+static uint8_t rt_ack[EXPECTED_WRITE_ACK_LEN];
+static uint8_t rt_ack_hw[EXPECTED_WRITE_ACK_LEN];
+static uint8_t rt_pos_hw[EXPECTED_READ16_ACK_LEN];
+static uint8_t rt_bad[EXPECTED_READ16_ACK_LEN];
+
+/* Guarded bus with retries, plus the acknowledgement and hardware-status replies. */
+static void use_rt_bus(const mock_step_t *steps, uint16_t step_count, uint8_t read_retries) {
+    const uint8_t pos[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
+    simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, NULL, PAYLOAD_LEN_NONE, rt_ack);
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, NULL, PAYLOAD_LEN_NONE, rt_ack_hw);
+    simulate_servo_response(TEST_VALID_ID, STS_BIT_ERR_OVERHEAT, pos, STS_DATA_LEN_16BIT, rt_pos_hw);
+    use_len_bus(steps, step_count, read_retries);
+}
+
+static sts_result_t rt_read(uint16_t *pos) {
+    *pos = LEN_POSITION_SENTINEL;
+    return STS_GetPresentPosition(&len_servo, pos);
+}
+
+static sts_result_t rt_write(void) {
+    return STS_SetTargetStep(&len_servo, RT_STEPS, STS_DIR_CW);
+}
+
+void test_STS_Read_Valid_Reply_One_Attempt(void) {
+    const mock_step_t steps[] = { {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 1U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, rt_read(&pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+void test_STS_Write_Valid_Ack_One_Attempt(void) {
+    const mock_step_t steps[] = { {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 1U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+void test_STS_Read_Retried_After_Lost_Reply(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, rt_read(&pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 2U, 1U, (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+}
+
+/* The servo may have moved: a lost acknowledgement must not resend a relative step. */
+void test_STS_Write_Not_Retried_After_Lost_Ack(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Read_Every_Attempt_Lost(void) {
+    use_rt_bus(NULL, 0U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_read(&pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_SENTINEL, pos);
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 3U, 2U, (len_counters_t){1U, 2U, 0U, 1U}, NULL);
+}
+
+void test_STS_Write_Every_Ack_Lost(void) {
+    use_rt_bus(NULL, 0U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Read_Hardware_Status_Not_Retried(void) {
+    const mock_step_t steps[] = { {rt_pos_hw, EXPECTED_READ16_ACK_LEN, STS_OK}, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+void test_STS_Write_Hardware_Status_Not_Retried(void) {
+    const mock_step_t steps[] = { {rt_ack_hw, EXPECTED_WRITE_ACK_LEN, STS_OK}, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 0U}, NULL);
+}
+
+/* --- One failure class on the first attempt, then a valid reply --- */
+
+typedef enum {
+    RT_TX_FAIL, RT_TX_BUSY, RT_TX_RX_FAIL, RT_LOST, RT_STAGE1_RX_FAIL, RT_LEN_MISMATCH, RT_LEN_OVERSIZE,
+    RT_STAGE2_TIMEOUT, RT_STAGE2_RX_FAIL, RT_CHECKSUM, RT_HEADER, RT_ID_MISMATCH, RT_CLASS_COUNT
+} rt_class_t;
+
+typedef struct {
+    const char  *name;
+    sts_result_t code;           /* What the failing attempt returns */
+    uint32_t     engine_flushes; /* Flushes inside the failing attempt (length mismatch path) */
+} rt_class_info_t;
+
+static const rt_class_info_t rt_classes[RT_CLASS_COUNT] = {
+    [RT_TX_FAIL]        = {"transmit TX_FAIL", STS_ERR_TX_FAIL, 0U},
+    [RT_TX_BUSY]        = {"transmit BUSY", STS_ERR_BUSY, 0U},
+    [RT_TX_RX_FAIL]     = {"transmit RX_FAIL", STS_ERR_RX_FAIL, 0U},
+    [RT_LOST]           = {"reply lost", STS_ERR_TIMEOUT, 0U},
+    [RT_STAGE1_RX_FAIL] = {"stage 1 RX_FAIL", STS_ERR_RX_FAIL, 0U},
+    [RT_LEN_MISMATCH]   = {"length mismatch", STS_ERR_MALFORMED, 1U},
+    [RT_LEN_OVERSIZE]   = {"oversize length", STS_ERR_MALFORMED, 1U},
+    [RT_STAGE2_TIMEOUT] = {"stage 2 timeout", STS_ERR_TIMEOUT, 0U},
+    [RT_STAGE2_RX_FAIL] = {"stage 2 RX_FAIL", STS_ERR_RX_FAIL, 0U},
+    [RT_CHECKSUM]       = {"checksum", STS_ERR_CHECKSUM, 0U},
+    [RT_HEADER]         = {"header", STS_ERR_HEADER, 0U},
+    [RT_ID_MISMATCH]    = {"ID mismatch", STS_ERR_ID_MISMATCH, 0U},
+};
+
+/* First step for class c, corrupting a copy of the valid reply where the class needs it. */
+static mock_step_t rt_failing_step(rt_class_t c, const uint8_t *valid, uint16_t len) {
+    memcpy(rt_bad, valid, len);
+    mock_step_t step = { rt_bad, len, STS_OK };
+    switch (c) {
+        case RT_TX_FAIL:        step = (mock_step_t){ NULL, 0U, STS_ERR_TX_FAIL }; break;
+        case RT_TX_BUSY:        step = (mock_step_t){ NULL, 0U, STS_ERR_BUSY }; break;
+        case RT_TX_RX_FAIL:     step = (mock_step_t){ NULL, 0U, STS_ERR_RX_FAIL }; break;
+        case RT_LOST:           step = (mock_step_t){ NULL, 0U, STS_OK }; break;
+        case RT_STAGE1_RX_FAIL: script.rx_fail_call = 1U; script.rx_fail_result = STS_ERR_RX_FAIL; break;
+        case RT_LEN_MISMATCH:   rt_bad[IDX_LENGTH_BYTE] = LEN_MISMATCH_BYTE; break;
+        case RT_LEN_OVERSIZE:   rt_bad[IDX_LENGTH_BYTE] = LEN_OVERSIZE_BYTE; break;
+        case RT_STAGE2_TIMEOUT: step.reply_len = RT_STAGE1_ONLY; break;
+        case RT_STAGE2_RX_FAIL: script.rx_fail_call = 2U; script.rx_fail_result = STS_ERR_RX_FAIL; break;
+        case RT_CHECKSUM:       rt_bad[len - 1U] ^= CORRUPT_CHECKSUM_MASK; break;
+        case RT_HEADER:         rt_bad[IDX_HEADER_START] = RT_CORRUPT_BYTE; break;
+        case RT_ID_MISMATCH:    rt_bad[STS_IDX_ID] = RT_FOREIGN_ID; break;
+        default: break;
+    }
+    return step;
+}
+
+void test_STS_Read_Retried_After_Every_Failure_Class(void) {
+    for (uint32_t c = 0U; c < RT_CLASS_COUNT; c++) {
+        mock_step_t steps[2] = { { NULL, 0U, STS_OK }, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+        use_rt_bus(NULL, 0U, LEN_RETRIES);     /* builds len_valid before it is copied */
+        steps[0] = rt_failing_step((rt_class_t)c, len_valid, EXPECTED_READ16_ACK_LEN);
+        script.steps = steps;
+        script.step_count = 2U;
+        uint16_t pos;
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_OK, rt_read(&pos), rt_classes[c].name);
+        TEST_ASSERT_EQUAL_HEX16_MESSAGE(LEN_POSITION_VALUE, pos, rt_classes[c].name);
+        assert_len_outcome(len_read_position, sizeof(len_read_position), 2U, 1U + rt_classes[c].engine_flushes,
+                           (len_counters_t){1U, 1U, 1U, 0U}, rt_classes[c].name);
+    }
+}
+
+void test_STS_Write_Not_Retried_After_Any_Failure_Class(void) {
+    for (uint32_t c = 0U; c < RT_CLASS_COUNT; c++) {
+        mock_step_t steps[2] = { { NULL, 0U, STS_OK }, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+        use_rt_bus(NULL, 0U, LEN_RETRIES);
+        steps[0] = rt_failing_step((rt_class_t)c, rt_ack, EXPECTED_WRITE_ACK_LEN);
+        script.steps = steps;
+        script.step_count = 2U;
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(rt_classes[c].code, rt_write(), rt_classes[c].name);
+        assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, rt_classes[c].engine_flushes,
+                           (len_counters_t){1U, 0U, 0U, 1U}, rt_classes[c].name);
+    }
+}
+
+void test_STS_Read_Not_Retried_With_Zero_Read_Retries(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, 0U);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Write_Not_Retried_With_Zero_Read_Retries(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, 0U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* A corrupted ID byte (0xFF) in a reply from ID 4 parses as INVALID_LEN: a wire fault, so a read retries it. */
+#define RT_INVALID_LEN_ID           4U
+void test_STS_Read_Retried_After_Invalid_Length_Reply(void) {
+    const uint8_t pos[STS_DATA_LEN_16BIT] = { 0x00U, 0x08U };
+    uint8_t good[EXPECTED_READ16_ACK_LEN];
+    simulate_servo_response(RT_INVALID_LEN_ID, STS_STATUS_OK, pos, STS_DATA_LEN_16BIT, good);
+    memcpy(rt_bad, good, sizeof(good));
+    rt_bad[STS_IDX_ID] = TEST_DUMMY_BYTE_FF;
+
+    /* Without retries the corrupted reply alone gives INVALID_LEN. */
+    const mock_step_t once[] = { {rt_bad, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(once, 1U, 0U);
+    (void)STS_Servo_Init(&len_servo, &len_bus.bus, RT_INVALID_LEN_ID);
+    uint16_t pos_out;
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_LEN, rt_read(&pos_out));
+
+    const mock_step_t steps[] = { {rt_bad, EXPECTED_READ16_ACK_LEN, STS_OK}, {good, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    memcpy(rt_bad, good, sizeof(good));
+    rt_bad[STS_IDX_ID] = TEST_DUMMY_BYTE_FF;
+    (void)STS_Servo_Init(&len_servo, &len_bus.bus, RT_INVALID_LEN_ID);
+
+    TEST_ASSERT_EQUAL_INT(STS_OK, rt_read(&pos_out));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos_out);
+    assert_len_outcome(NULL, 0U, 2U, 1U, (len_counters_t){1U, 1U, 1U, 0U}, NULL);
+}
+
+/* --- Caller errors and reported codes --- */
+
+void test_STS_Read_Stops_On_Transport_Null_Pointer(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_NULL_PTR}, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* Another port may reject an argument with INVALID_PARAM: it would fail the same way again. */
+void test_STS_Read_Stops_On_Transport_Invalid_Param(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_INVALID_PARAM}, {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Write_Returns_Transport_Null_Pointer(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_ERR_NULL_PTR}, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_NULL_PTR, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* An output buffer too small for the reply fails the same way every time: one attempt. */
+void test_STS_Read_Stops_On_Caller_Buffer_Too_Small(void) {
+    const mock_step_t steps[] = { {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 3U, LEN_RETRIES);
+    const uint8_t params[] = { 0x38U, STS_DATA_LEN_16BIT };
+    uint8_t out[1] = {0};
+    uint16_t out_len = 0U;
+    sts_cmd_t cmd = {
+        .instruction      = STS_INST_READ,
+        .tx_params        = params,
+        .tx_param_len     = sizeof(params),
+        .expected_rx_len  = EXPECTED_READ16_ACK_LEN,
+        .rx_params_out    = out,
+        .rx_params_size   = sizeof(out),
+        .rx_param_len_out = &out_len
+    };
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_BUF_TOO_SMALL, sts_execute_read(&len_servo, &cmd));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Read_Reports_Last_Attempt_Code(void) {
+    const mock_step_t steps[] = { {rt_bad, EXPECTED_READ16_ACK_LEN, STS_OK}, {NULL, 0U, STS_OK}, {NULL, 0U, STS_OK} };
+    use_rt_bus(NULL, 0U, LEN_RETRIES);
+    memcpy(rt_bad, len_valid, EXPECTED_READ16_ACK_LEN);
+    rt_bad[EXPECTED_READ16_ACK_LEN - 1U] ^= CORRUPT_CHECKSUM_MASK;
+    script.steps = steps;
+    script.step_count = 3U;
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 3U, 2U, (len_counters_t){1U, 2U, 0U, 1U}, NULL);
+}
+
+void test_STS_Write_Reports_First_And_Only_Code(void) {
+    const mock_step_t steps[] = { {rt_bad, EXPECTED_WRITE_ACK_LEN, STS_OK}, {NULL, 0U, STS_OK}, {NULL, 0U, STS_OK} };
+    use_rt_bus(NULL, 0U, LEN_RETRIES);
+    memcpy(rt_bad, rt_ack, EXPECTED_WRITE_ACK_LEN);
+    rt_bad[EXPECTED_WRITE_ACK_LEN - 1U] ^= CORRUPT_CHECKSUM_MASK;
+    script.steps = steps;
+    script.step_count = 3U;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_CHECKSUM, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+void test_STS_Read_Hardware_Status_After_Lost_Reply(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {rt_pos_hw, EXPECTED_READ16_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+    uint16_t pos;
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_HARDWARE, rt_read(&pos));
+    assert_len_outcome(len_read_position, sizeof(len_read_position), 2U, 1U, (len_counters_t){1U, 1U, 0U, 0U}, NULL);
+}
+
+void test_STS_Write_Lost_Ack_Hides_Later_Hardware_Status(void) {
+    const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {rt_ack_hw, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 2U, LEN_RETRIES);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_TIMEOUT, rt_write());
+    assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* --- A corrupted acknowledgement must not resend the write --- */
+
+void test_STS_Write_Not_Retried_After_Any_Ack_Length_Bit_Flip(void) {
+    char msg[24];
+    for (uint32_t bit = 0U; bit < RT_LEN_BITS; bit++) {
+        mock_step_t steps[2] = { { rt_bad, EXPECTED_WRITE_ACK_LEN, STS_OK }, {rt_ack, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+        use_rt_bus(steps, 2U, LEN_RETRIES);
+        memcpy(rt_bad, rt_ack, EXPECTED_WRITE_ACK_LEN);
+        rt_bad[IDX_LENGTH_BYTE] = (uint8_t)(RT_ACK_LEN_BYTE ^ (1U << bit));
+        (void)snprintf(msg, sizeof(msg), "length byte 0x%02X", (unsigned)rt_bad[IDX_LENGTH_BYTE]);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_ERR_MALFORMED, rt_write(), msg);
+        assert_len_outcome(rt_step_packet, sizeof(rt_step_packet), 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, msg);
+    }
+}
+
+void test_STS_SetID_Not_Resent_After_Corrupted_Ack(void) {
+    const mock_step_t steps[] = { {rt_bad, EXPECTED_WRITE_ACK_LEN, STS_OK} };
+    use_rt_bus(steps, 1U, LEN_RETRIES);
+    memcpy(rt_bad, rt_ack, EXPECTED_WRITE_ACK_LEN);
+    rt_bad[IDX_LENGTH_BYTE] = (uint8_t)(RT_ACK_LEN_BYTE | 0x80U);
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_MALFORMED, STS_SetID(&len_servo, RT_NEW_ID));
+    assert_len_outcome(rt_set_id_packet, sizeof(rt_set_id_packet), 1U, 1U, (len_counters_t){1U, 0U, 0U, 1U}, NULL);
+}
+
+/* --- Every API function --- */
+
+typedef sts_result_t (*rt_call_t)(sts_servo_t *servo);
+typedef struct {
+    const char *name;
+    rt_call_t   call;
+    uint16_t    reply_len;
+} rt_api_t;
+
+static sts_result_t rt_get_position(sts_servo_t *s) { uint16_t v; return STS_GetPresentPosition(s, &v); }
+static sts_result_t rt_get_speed(sts_servo_t *s)    { int16_t v;  return STS_GetPresentSpeed(s, &v); }
+static sts_result_t rt_get_load(sts_servo_t *s)     { int16_t v;  return STS_GetPresentLoad(s, &v); }
+static sts_result_t rt_get_voltage(sts_servo_t *s)  { uint8_t v;  return STS_GetPresentVoltage(s, &v); }
+static sts_result_t rt_get_temp(sts_servo_t *s)     { uint8_t v;  return STS_GetPresentTemperature(s, &v); }
+static sts_result_t rt_get_moving(sts_servo_t *s)   { uint8_t v;  return STS_GetMovingStatus(s, &v); }
+static sts_result_t rt_read8(sts_servo_t *s)        { uint8_t v;  return STS_Read8(s, STS_REG_PRESENT_TEMP, &v); }
+static sts_result_t rt_read16(sts_servo_t *s)       { uint16_t v; return STS_Read16(s, STS_REG_PRESENT_POSITION, &v); }
+static sts_result_t rt_ping(sts_servo_t *s)         { return STS_servo_ping(s); }
+
+static const rt_api_t rt_reads[] = {
+    {"GetPresentPosition", rt_get_position, EXPECTED_READ16_ACK_LEN},
+    {"GetPresentSpeed", rt_get_speed, EXPECTED_READ16_ACK_LEN},
+    {"GetPresentLoad", rt_get_load, EXPECTED_READ16_ACK_LEN},
+    {"GetPresentVoltage", rt_get_voltage, EXPECTED_READ8_ACK_LEN},
+    {"GetPresentTemperature", rt_get_temp, EXPECTED_READ8_ACK_LEN},
+    {"GetMovingStatus", rt_get_moving, EXPECTED_READ8_ACK_LEN},
+    {"Read8", rt_read8, EXPECTED_READ8_ACK_LEN},
+    {"Read16", rt_read16, EXPECTED_READ16_ACK_LEN},
+    {"servo_ping", rt_ping, EXPECTED_WRITE_ACK_LEN},
+};
+
+static sts_result_t rt_torque(sts_servo_t *s)  { return STS_SetTorqueEnable(s, STS_TORQUE_ENABLE); }
+static sts_result_t rt_mode(sts_servo_t *s)    { return STS_SetOperatingMode(s, STS_MODE_SPEED); }
+static sts_result_t rt_goal(sts_servo_t *s)    { return STS_SetTargetPosition(s, LEN_POSITION_VALUE); }
+static sts_result_t rt_speed(sts_servo_t *s)   { return STS_SetTargetSpeed(s, RT_STEPS, STS_DIR_CW); }
+static sts_result_t rt_accel(sts_servo_t *s)   { return STS_SetTargetAcceleration(s, TEST_VAL_8BIT); }
+static sts_result_t rt_pwm(sts_servo_t *s)     { return STS_SetTargetPWM(s, RT_STEPS, STS_DIR_CW); }
+static sts_result_t rt_step(sts_servo_t *s)    { return STS_SetTargetStep(s, RT_STEPS, STS_DIR_CW); }
+static sts_result_t rt_limit(sts_servo_t *s)   { return STS_SetTorqueLimit(s, RT_STEPS); }
+static sts_result_t rt_lock(sts_servo_t *s)    { return STS_SetEEPROMLock(s, EEPROM_LOCK); }
+static sts_result_t rt_set_id(sts_servo_t *s)  { return STS_SetID(s, RT_NEW_ID); }
+static sts_result_t rt_write8(sts_servo_t *s)  { return STS_Write8(s, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE); }
+static sts_result_t rt_write16(sts_servo_t *s) { return STS_Write16(s, STS_REG_GOAL_POSITION, LEN_POSITION_VALUE); }
+static sts_result_t rt_target_position(sts_servo_t *s) { s->current_mode = STS_MODE_POSITION; return STS_SetTarget(s, (int32_t)LEN_POSITION_VALUE); }
+static sts_result_t rt_target_speed(sts_servo_t *s)    { s->current_mode = STS_MODE_SPEED;    return STS_SetTarget(s, (int32_t)RT_STEPS); }
+static sts_result_t rt_target_pwm(sts_servo_t *s)      { s->current_mode = STS_MODE_PWM;      return STS_SetTarget(s, (int32_t)RT_STEPS); }
+static sts_result_t rt_target_step(sts_servo_t *s)     { s->current_mode = STS_MODE_STEP;     return STS_SetTarget(s, (int32_t)RT_STEPS); }
+
+static const rt_api_t rt_writes[] = {
+    {"SetTorqueEnable", rt_torque, 0U}, {"SetOperatingMode", rt_mode, 0U}, {"SetTargetPosition", rt_goal, 0U},
+    {"SetTargetSpeed", rt_speed, 0U}, {"SetTargetAcceleration", rt_accel, 0U}, {"SetTargetPWM", rt_pwm, 0U},
+    {"SetTargetStep", rt_step, 0U}, {"SetTorqueLimit", rt_limit, 0U}, {"SetEEPROMLock", rt_lock, 0U},
+    {"SetID", rt_set_id, 0U}, {"Write8", rt_write8, 0U}, {"Write16", rt_write16, 0U},
+    {"SetTarget position", rt_target_position, 0U}, {"SetTarget speed", rt_target_speed, 0U},
+    {"SetTarget PWM", rt_target_pwm, 0U}, {"SetTarget step", rt_target_step, 0U},
+};
+
+void test_STS_Every_Read_Function_Retried(void) {
+    for (uint32_t i = 0U; i < (uint32_t)(sizeof(rt_reads) / sizeof(rt_reads[0])); i++) {
+        uint8_t reply[EXPECTED_READ16_ACK_LEN] = {0};
+        const uint8_t zeros[STS_DATA_LEN_16BIT] = {0};
+        simulate_servo_response(TEST_VALID_ID, STS_STATUS_OK, zeros, (uint16_t)(rt_reads[i].reply_len - EXPECTED_WRITE_ACK_LEN), reply);
+        const mock_step_t steps[] = { {NULL, 0U, STS_OK}, {reply, rt_reads[i].reply_len, STS_OK} };
+        use_rt_bus(steps, 2U, LEN_RETRIES);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_OK, rt_reads[i].call(&len_servo), rt_reads[i].name);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(2U, script.tx_count, rt_reads[i].name);
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(script.tx_log_len[0], script.tx_log_len[1], rt_reads[i].name);
+        TEST_ASSERT_EQUAL_HEX8_ARRAY_MESSAGE(script.tx_log[0], script.tx_log[1], script.tx_log_len[0], rt_reads[i].name);
+        assert_len_outcome(NULL, 0U, 2U, 1U, (len_counters_t){1U, 1U, 1U, 0U}, rt_reads[i].name);
+    }
+}
+
+void test_STS_Every_Write_Function_Single_Attempt(void) {
+    for (uint32_t i = 0U; i < (uint32_t)(sizeof(rt_writes) / sizeof(rt_writes[0])); i++) {
+        use_rt_bus(NULL, 0U, LEN_RETRIES);
+
+        TEST_ASSERT_EQUAL_INT_MESSAGE(STS_ERR_TIMEOUT, rt_writes[i].call(&len_servo), rt_writes[i].name);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(EXPECTED_INST_WRITE, script.tx_log[0][STS_IDX_INSTRUCTION], rt_writes[i].name);
+        assert_len_outcome(NULL, 0U, 1U, 0U, (len_counters_t){1U, 0U, 0U, 1U}, rt_writes[i].name);
+    }
+}
+
+
+/* --- Engine state between attempts --- */
+
+static uint16_t short_rx_cut;   /* 0 = normal; otherwise a stage-2 receive gets this many bytes but reports OK */
+
+/* Like the STM32 port on a short frame: returns OK although fewer bytes arrived than were requested. */
+static sts_result_t short_ok_rx(sts_bus_t *bus, uint8_t *data, uint16_t len, uint32_t timeout_ms) {
+    if (short_rx_cut != 0U && data != bus->rx_buf && len > short_rx_cut) {   /* stage 2 only */
+        (void)mock_script_rx(bus, data, short_rx_cut, timeout_ms);
+        return STS_OK;
+    }
+    return mock_script_rx(bus, data, len, timeout_ms);
+}
+
+/* A repeated read cut short must not be completed by the previous reply's bytes left in rx_buf. */
+void test_STS_Read_Short_Reply_Not_Completed_By_Stale_Buffer(void) {
+    const mock_step_t steps[] = { {len_valid, EXPECTED_READ16_ACK_LEN, STS_OK},
+                                  {len_valid, EXPECTED_READ16_ACK_LEN - 2U, STS_OK} };
+    use_rt_bus(steps, 2U, 0U);
+    len_bus.bus.receive = short_ok_rx;
+    uint16_t pos;
+
+    short_rx_cut = 0U;
+    TEST_ASSERT_EQUAL_INT(STS_OK, rt_read(&pos));
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_VALUE, pos);
+
+    short_rx_cut = STS_DATA_LEN_16BIT;   /* stage 2 wants 4 bytes, gets 2 */
+    sts_result_t res = rt_read(&pos);
+    short_rx_cut = 0U;
+    TEST_ASSERT_NOT_EQUAL_INT(STS_OK, res);
+    TEST_ASSERT_EQUAL_HEX16(LEN_POSITION_SENTINEL, pos);
+}
+
+/* ID 0xFF cannot be framed: the write is rejected and nothing is sent or counted. */
+void test_STS_Write_Not_Sent_When_Packet_Cannot_Be_Built(void) {
+    use_rt_bus(NULL, 0U, LEN_RETRIES);
+    len_servo.id = STS_ID_BROADCAST_ASYNC;
+    sts_bus_t snapshot;
+    memcpy(&snapshot, &len_bus.bus, sizeof(snapshot));
+
+    TEST_ASSERT_EQUAL_INT(STS_ERR_INVALID_PARAM, STS_Write8(&len_servo, STS_REG_TORQUE_ENABLE, STS_TORQUE_ENABLE));
+    TEST_ASSERT_EQUAL_UINT32(0U, script.tx_count);
+    TEST_ASSERT_EQUAL_UINT32(snapshot.total_transactions, len_bus.bus.total_transactions);
+    TEST_ASSERT_EQUAL_UINT32(snapshot.hard_failures, len_bus.bus.hard_failures);
 }

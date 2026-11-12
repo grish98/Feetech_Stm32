@@ -12,7 +12,7 @@ Validation evidence for the STM32F103 port, including historical campaigns drive
 | Wiring | Direct half-duplex, servo DATA to PA2, STM32 HDSEL mode |
 | Reception | DMA with UART IDLE-line framing |
 | Reporting | SEGGER RTT |
-| Retry policy | `max_retries = 2` during campaigns |
+| Retry policy | `max_retries = 2` during these campaigns, applied to every command; later firmware retries reads and ping only (`max_read_retries`) |
 
 The four tabulated campaigns below used the earlier per-packet AF_PP/input GPIO switching. The current port keeps PA2 in AF_OD, with UART TE/RE direction switching and no STM32 internal pull-up configured. Its separately reported test results are recorded under [Current AF open-drain port](#current-af-open-drain-port).
 
@@ -27,7 +27,7 @@ USART1 on the development board is physically damaged, which is why USART2 is us
 - quiescence-gate activations, counting how often the servo was still moving when a timed move was about to begin
 - bus-counter deltas taken from `sts_bus_t`: `total_transactions`, `total_retries`, `retry_saves`, and `hard_failures`
 
-The counters live in the command engine (`sts_execute_command`), so every transaction the service layer issues is counted regardless of which command produced it. A retry increments `total_retries`; a transaction that exhausted all attempts increments `hard_failures`. This distinction matters: a campaign with retries but no hard failures would indicate a bus that is degrading but recovering, which is a different result from a campaign that never needed a retry at all.
+The counters live in the command engine, so every transaction the service layer issues is counted regardless of which command produced it. A retry increments `total_retries`; a transaction whose final attempt failed increments `hard_failures`. This distinction matters: a campaign with retries but no hard failures would indicate a bus that is degrading but recovering, which is a different result from a campaign that never needed a retry at all.
 
 ## Campaign results
 
@@ -52,7 +52,7 @@ These are direct observations from a single bench: one MCU, one servo, one cable
 
 Across these campaigns, the command engine recorded no retries and no terminal transport or protocol failures. These results cover the instrumented paths and do not rule out faults that produce plausible but incorrect data.
 
-`uart_drain_rx` has no independent counter, but calls from `STM32_UART_Receive` return a transport error to the command engine, where retries or exhausted attempts are counted. Explicit flush callbacks also run before retries and after unexpected response lengths. In the firmware these campaigns ran, some early returns in `sts_execute_command` also bypassed `hard_failures`, including an oversized reported packet length, which returned `STS_ERR_BUF_TOO_SMALL` after the transaction had already been counted. The engine now treats an oversized length as a malformed reply: flushed, retried and counted. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
+`uart_drain_rx` has no independent counter, but calls from `STM32_UART_Receive` return a transport error to the command engine, where retries or exhausted attempts are counted. Explicit flush callbacks also run before retries and after unexpected response lengths. In the firmware these campaigns ran, some early returns in `sts_execute_command` also bypassed `hard_failures`, including an oversized reported packet length, which returned `STS_ERR_BUF_TOO_SMALL` after the transaction had already been counted. The engine now treats an oversized length as a malformed reply: flushed and counted, and retried only for reads and ping. A campaign that reports zero hard failures is therefore evidence about the paths that are counted, not proof that nothing went wrong anywhere.
 
 ## Postmortem: intermittent acceleration failure
 
