@@ -76,7 +76,6 @@ typedef struct sts_servo_t {
     sts_bus_t *bus;    /**< Pointer to the bus this servo is connected to */
     uint8_t id;        /**< Unique ID of the servo (0-253) */
     uint8_t is_online; /**< Connection status (STS_ONLINE/STS_OFFLINE) */
-    sts_operating_mode_t  current_mode;
 } sts_servo_t;
 
 /**

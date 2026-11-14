@@ -1,6 +1,6 @@
 # Feetech STS Servo Driver (STM32)
 
-A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 428 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
+A portable, dependency-free C11 core for **Feetech STS series smart servos** over half-duplex UART. The project includes an STM32F103 hardware port using DMA-driven half-duplex UART with IDLE-line reception. The core is covered by 373 host unit tests in CI, which also builds the STM32 firmware. The current AF open-drain port has completed 304,227 live transactions with zero retries or hard communication failures on the tested single-servo bench, separately from 390,385 historical transactions.
 
 [![CI - Feetech Driver](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml/badge.svg)](https://github.com/grish98/Feetech_Stm32/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/github/v/tag/grish98/Feetech_Stm32?sort=semver)](https://github.com/grish98/Feetech_Stm32/tags)
@@ -11,7 +11,7 @@ A portable, dependency-free C11 core for **Feetech STS series smart servos** ove
 
 ## Status
 
-- **Protocol and service core**: implemented and covered by **374 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass. CI also builds the STM32 firmware in Debug and Release.
+- **Protocol and service core**: implemented and covered by **319 passing host unit tests** using Unity and CTest, gated in CI alongside a Cppcheck static-analysis pass. CI also builds the STM32 firmware in Debug and Release.
 - **STM32F103 port**: validated across four historical on-target campaigns totalling **390,385 transactions with zero retries and zero hard failures**. Full per-campaign figures and methodology are in [docs/hardware-validation.md](docs/hardware-validation.md).
 - **Port simplification**: PA2 now stays in AF open-drain mode, removing per-packet GPIO switching and the unused scope marker.
 - **Latest bench report**: two complete AF_OD campaigns passed **400 runs and 12,800 individual tests**, recording **304,227 transactions with zero retries or hard communication failures**. The tested configuration uses **1.5 kOhm from PA2/DATA to 3.3 V at 1 Mbaud, 8N1**; removing the resistor caused communication failure. Direction-separated captures measured approximately **195 ns command rise time** and **5 ns reply rise time**. See [hardware validation](docs/hardware-validation.md#current-af-open-drain-port).
@@ -30,7 +30,7 @@ An intermittent test failure was traced to state persisting between test runs ra
 - **Granular error reporting**: separate result codes distinguish validation, protocol, transport, timeout, and device faults
 - **Portable**: written in C11 with fixed-width types; no platform-specific dependencies in the core
 - **Broad command coverage**: position, speed, acceleration, PWM, step, torque, telemetry, EEPROM, and ID control, with verified variants for torque enable, operating mode, torque limit, and ID changes
-- **473 host unit tests** (Unity/CTest), 40 of them self-tests of the scripted test transport and 5 of the example application's start-up, plus an on-target hardware integration and stress suite
+- **418 host unit tests** (Unity/CTest), 40 of them self-tests of the scripted test transport and 5 of the example application's start-up, plus an on-target hardware integration and stress suite
 
 ---
 
@@ -181,7 +181,7 @@ cmake --build build_native --config Debug
 ctest --test-dir build_native -C Debug --output-on-failure
 ```
 
-All 473 tests should pass across four suites: 40 in the protocol layer, 374 in the service suite (334 for the service and command layers and 40 self-tests of the scripted test transport), 54 in the receive ring buffer, and 5 for the example application's start-up, built on the host with the HAL, RTT and port faked. A fifth CTest entry runs two tests that must fail, to prove the scripted transport can fail a test; CTest reports it as passed only when both fail. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
+All 418 tests should pass across four suites: 40 in the protocol layer, 319 in the service suite (279 for the service and command layers and 40 self-tests of the scripted test transport), 54 in the receive ring buffer, and 5 for the example application's start-up, built on the host with the HAL, RTT and port faked. A fifth CTest entry runs two tests that must fail, to prove the scripted transport can fail a test; CTest reports it as passed only when both fail. The `--config` and `-C` flags are required by multi-config generators such as Visual Studio and are ignored by single-config generators such as Ninja and Unix Makefiles.
 
 ### Build the API documentation
 

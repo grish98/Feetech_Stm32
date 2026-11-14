@@ -73,6 +73,8 @@ sts_result_t STS_SetTorqueEnable(sts_servo_t *servo, uint8_t enable);
  * @param mode The desired operating mode (Position, Speed, PWM, Step).
  * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
  *       argument errors send nothing. Read-back advice: see the file header.
+ * @note The driver keeps no record of the mode. Call the target function that matches the mode the
+ *       servo is in: STS_SetTargetPosition and STS_SetTargetStep write the same register.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
 sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode);
@@ -80,12 +82,12 @@ sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode)
 /**
  * @brief Sets the absolute target position for the servo.
  * @param servo Pointer to an initialised servo handle.
- * @param position 0 to STS_MAX_POSITION.
+ * @param position 0 to STS_MAX_POSITION, compared as 32 bits.
  * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
  *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
-sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint16_t position);
+sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint32_t position);
 
 /**
  * @brief Reads the current actual position from the servo.
@@ -107,13 +109,13 @@ sts_result_t STS_GetPresentSpeed(sts_servo_t *servo, int16_t *speed_out);
  * @brief Sets the target speed and direction of the servo.
  * @note In Mode 1 (Speed) and 3 (Step), dictates movement vector. In Mode 0 (Position), acts as a speed limit.
  * @param servo Pointer to an initialized servo handle.
- * @param speed The target speed magnitude (0 to STS_MAX_SPEED).
+ * @param speed The target speed magnitude (0 to STS_MAX_SPEED), compared as 32 bits.
  * @param dir The desired rotation direction (STS_DIR_CCW or STS_DIR_CW).
  * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
  *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or speciifc error code.
  */
-sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir);
+sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint32_t speed, sts_direction_t dir);
 
 /**
  * @brief Sets the acceleration profile for servo movements.
@@ -126,43 +128,28 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
 sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration);
 
 /**
- * @brief Universal target wrapper that routes the command based on current mode.
- * @note In Speed, PWM and Step modes the sign gives the direction (negative = CW) and the
- *       magnitude must not exceed STS_MAX_SPEED, STS_MAX_PWM or STS_MAX_STEP. In Position mode
- *       the target must be 0 to STS_MAX_POSITION. Out-of-range targets are rejected, never
- *       clamped or wrapped, and nothing is sent.
- * @param servo Pointer to an initialized servo handle.
- * @param target The desired target value. Bounds depend on active mode.
- * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
- *       argument errors send nothing. Read-back advice: see the file header.
- * @return sts_result_t STS_OK on success, STS_ERR_INVALID_PARAM if the target is out of range
- *         for the active mode or the mode is invalid, or the transaction's error code.
- */
-sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target);
-
-/**
  * @brief Commands the servo to move a relative number of steps.
  * @note Servo must be in Step Mode (Mode 3).
  * @param servo Pointer to an initialized servo handle.
- * @param steps Number of relative steps to execute (0 to STS_MAX_STEP).
+ * @param steps Number of relative steps to execute (0 to STS_MAX_STEP), compared as 32 bits.
  * @param dir The direction of rotation (STS_DIR_CW or STS_DIR_CCW).
  * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
  *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
-sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction_t dir);
+sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint32_t steps, sts_direction_t dir);
 
 /**
  * @brief Sets the open-loop PWM duty cycle (effort) applied to motor coils.
  * @note Servo must be in PWM Mode (Mode 2).
  * @param servo Pointer to an initialized servo handle.
- * @param pwm Raw PWM effort value (0 to STS_MAX_PWM).
+ * @param pwm Raw PWM effort value (0 to STS_MAX_PWM), compared as 32 bits.
  * @param dir The direction to apply force (STS_DIR_CW or STS_DIR_CCW).
  * @note One attempt, never retried. If the command was sent and the call fails, the outcome is unknown;
  *       argument errors send nothing. Read-back advice: see the file header.
  * @return sts_result_t STS_OK on success, or specific error code.
  */
-sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir);
+sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint32_t pwm, sts_direction_t dir);
 
 /**
  * @brief Sets the dynamic (RAM) maximum torque limit.
@@ -246,7 +233,7 @@ sts_result_t STS_SetID(sts_servo_t *servo, uint8_t new_id);
 /** @brief STS_SetTorqueEnable, confirmed by reading 0x28 back; re-sent once if needed. */
 sts_result_t STS_SetTorqueEnableVerified(sts_servo_t *servo, uint8_t enable);
 
-/** @brief STS_SetOperatingMode, confirmed by reading 0x21 back; re-sent once if needed. Does not change current_mode. */
+/** @brief STS_SetOperatingMode, confirmed by reading 0x21 back; re-sent once if needed. */
 sts_result_t STS_SetOperatingModeVerified(sts_servo_t *servo, sts_operating_mode_t mode);
 
 /** @brief STS_SetTorqueLimit, confirmed by reading 0x30 back; re-sent once if needed. */

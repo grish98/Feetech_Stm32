@@ -51,24 +51,27 @@ The bus tracks `total_transactions`, `total_retries`, `retry_saves`, and `hard_f
 **Why a sliding-window seeker rather than a strict header check?**
 A half-duplex bus can present the receiver with collision fragments or noise before the real response. The parser scans for the `0xFF 0xFF` sync pair, validates the candidate packet at that offset, and advances by one byte on failure rather than discarding the buffer. A false header inside noise therefore costs one byte of progress instead of the whole response. It does not filter a local echo: an echoed ping or read is itself a valid packet, so keeping echo out is the transport's job (see the porting guide).
 
-## Operating modes and target dispatch
+## Operating modes
 
 The servo supports four operating modes, selected with `STS_SetOperatingMode`. The active mode determines how target commands are interpreted.
 
 | Mode | Behaviour |
 | --- | --- |
-| `STS_MODE_POSITION` | Absolute position control via the servo's internal PID, within `[0, STS_MAX_POSITION]`. Target speed acts as a travel limit. The servo holds position under load. This is the default after `STS_Servo_Init`. |
+| `STS_MODE_POSITION` | Absolute position control via the servo's internal PID, within `[0, STS_MAX_POSITION]`. Target speed acts as a travel limit. The servo holds position under load. |
 | `STS_MODE_SPEED` | Continuous rotation velocity control within `[0, STS_MAX_SPEED]`. Absolute position commands are ignored. Useful for wheel-drive or conveyor applications. |
 | `STS_MODE_PWM` | Open-loop voltage control within `[0, STS_MAX_PWM]`. The PID is disabled and the servo behaves as a standard DC motor. |
 | `STS_MODE_STEP` | Relative position control within `[0, STS_MAX_STEP]`. Moves a specified number of steps from the current location without tracking an absolute target. |
 
 Direction for speed, PWM, and step modes is supplied explicitly through the `dir` argument of the individual command functions, and is encoded into the relevant register's direction bit.
 
-**Why does `STS_SetTarget` use the sign of its argument to encode direction?**
-`STS_SetTarget` is a convenience dispatcher that routes to the correct command for the servo's current mode, so it needs one argument type that can express every mode's target. Speed, PWM, and step all need a direction; position does not. Taking a signed `int32_t` and reading the sign as direction gives a single uniform call for all four modes.
+**Why is there no single set-target function?**
+Each mode has its own command: `STS_SetTargetPosition`, `STS_SetTargetSpeed`, `STS_SetTargetPWM` and `STS_SetTargetStep`. A single function that picked the command from the servo's mode would need to know that mode, and the driver cannot see it without reading register 0x21 from the servo. A copy kept in the servo handle can differ from the servo: a second handle for the same servo, or a raw write to the mode register, changes the servo and not the copy. The difference matters because the position and step commands write the same goal register, so a wrong copy would turn an absolute position into a relative move, or the reverse. The driver therefore keeps no record of the mode. The application sets the mode, calls the command that matches it, and can read register 0x21 with `STS_Read8` to check. An earlier `STS_SetTarget` wrapper chose the command from a mode field in the handle that `STS_SetOperatingMode` never updated; it was removed.
 
-**Why does `STS_SetTarget` reject out-of-range targets instead of clamping them?**
-A target outside the active mode's range returns `STS_ERR_INVALID_PARAM` and nothing is sent. This covers targets above the mode's maximum, of any size, and negative targets in position mode. Clamping would return `STS_OK` for a command that was not carried out as requested: in step mode a relative move would be silently shortened, and in speed mode a miscalculated target would become full speed. A caller on production equipment needs to learn that its target was wrong, so the wrapper applies the same rule as `STS_SetTargetPosition`, `STS_SetTargetSpeed`, `STS_SetTargetPWM` and `STS_SetTargetStep`. Before narrowing to the 16-bit register value, the wrapper rejects any magnitude above `UINT16_MAX`, so a large target cannot wrap into a valid one; each per-mode function then enforces its own, smaller limit.
+**Why are out-of-range targets rejected instead of clamped?**
+A target above its command's maximum returns `STS_ERR_INVALID_PARAM` and nothing is sent. Clamping would return `STS_OK` for a command that was not carried out as requested: in step mode a relative move would be silently shortened, and in speed mode a miscalculated target would become full speed. A caller on production equipment needs to learn that its target was wrong. The limits are `STS_MAX_POSITION`, `STS_MAX_SPEED`, `STS_MAX_PWM` and `STS_MAX_STEP`.
+
+**Why do the target functions take 32-bit values for 16-bit registers?**
+The goal registers are 16 bits wide, but the range check has to see the value the caller computed. With a 16-bit parameter, C converts a wider argument before the function runs: 65636 would arrive as 100, pass the check and be sent. With a 32-bit parameter the function compares the whole value with the command's maximum, so 65636 is rejected and nothing is sent. A negative value passed from a signed 32-bit variable converts to a value above every maximum and is rejected the same way. A value that does not fit in 32 bits is still converted by C before the call, so the function cannot see it. The other setters are not widened: those for acceleration, torque limit, torque enable, EEPROM lock and ID, verified or not, still take a parameter as wide as their register, so C narrows a wider argument before the function runs, and `STS_SetTorqueLimit(&servo, 66036)` sends a torque limit of 500.
 
 ## Configuration
 

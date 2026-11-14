@@ -42,7 +42,7 @@ sts_result_t STS_SetOperatingMode(sts_servo_t *servo, sts_operating_mode_t mode)
     return STS_Write8(servo, STS_REG_OPERATION_MODE, (uint8_t)mode);
 }
 
-sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint16_t position) {
+sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint32_t position) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
@@ -50,7 +50,7 @@ sts_result_t STS_SetTargetPosition(sts_servo_t *servo, uint16_t position) {
         return STS_ERR_INVALID_PARAM;
     }
 
-    return STS_Write16(servo, STS_REG_GOAL_POSITION, position);
+    return STS_Write16(servo, STS_REG_GOAL_POSITION, (uint16_t)position);
 }
 
 sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out) {
@@ -60,7 +60,7 @@ sts_result_t STS_GetPresentPosition(sts_servo_t *servo, uint16_t *position_out) 
     return STS_Read16(servo, STS_REG_PRESENT_POSITION, position_out);
 }
 
-sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_direction_t dir) {
+sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint32_t speed, sts_direction_t dir) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
@@ -69,7 +69,7 @@ sts_result_t STS_SetTargetSpeed(sts_servo_t *servo, uint16_t speed, sts_directio
         return STS_ERR_INVALID_PARAM;
     }
 
-    uint16_t reg_val = speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
+    uint16_t reg_val = (uint16_t)speed | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
 
@@ -102,7 +102,7 @@ sts_result_t STS_SetTargetAcceleration(sts_servo_t *servo, uint8_t acceleration)
     return STS_Write8(servo, STS_REG_ACCELERATION, acceleration);
 }
 
-sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t dir) {
+sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint32_t pwm, sts_direction_t dir) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
@@ -111,11 +111,11 @@ sts_result_t STS_SetTargetPWM(sts_servo_t *servo, uint16_t pwm, sts_direction_t 
         return STS_ERR_INVALID_PARAM;
     }
 
-    uint16_t reg_val = pwm | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
+    uint16_t reg_val = (uint16_t)pwm | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_SPEED, reg_val);
 }
 
-sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction_t dir) {
+sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint32_t steps, sts_direction_t dir) {
     if (servo == NULL) {
         return STS_ERR_NULL_PTR;
     }
@@ -124,44 +124,8 @@ sts_result_t STS_SetTargetStep(sts_servo_t *servo, uint16_t steps, sts_direction
         return STS_ERR_INVALID_PARAM;
     }
 
-    uint16_t reg_val = steps | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
+    uint16_t reg_val = (uint16_t)steps | ((uint16_t)dir * STS_SPEED_DIRECTION_BIT);
     return STS_Write16(servo, STS_REG_GOAL_POSITION, reg_val);
-}
-
-sts_result_t STS_SetTarget(sts_servo_t *servo, int32_t target) {
-    if (servo == NULL) {
-        return STS_ERR_NULL_PTR;
-    }
-
-    sts_direction_t dir = (target < 0) ? STS_DIR_CW : STS_DIR_CCW;
-    /* Negate in unsigned arithmetic: -target overflows for INT32_MIN. */
-    uint32_t magnitude  = (target < 0) ? (0U - (uint32_t)target) : (uint32_t)target;
-
-    /* Reject before the uint16_t casts below, which would wrap modulo 65536.
-     * Each per-mode function checks its own, smaller range. */
-    if (magnitude > UINT16_MAX) {
-        return STS_ERR_INVALID_PARAM;
-    }
-
-    switch (servo->current_mode) {
-        case STS_MODE_POSITION:
-            if (target < 0) {
-                return STS_ERR_INVALID_PARAM;
-            }
-            return STS_SetTargetPosition(servo, (uint16_t)magnitude);
-
-        case STS_MODE_SPEED:
-            return STS_SetTargetSpeed(servo, (uint16_t)magnitude, dir);
-
-        case STS_MODE_PWM:
-            return STS_SetTargetPWM(servo, (uint16_t)magnitude, dir);
-
-        case STS_MODE_STEP:
-            return STS_SetTargetStep(servo, (uint16_t)magnitude, dir);
-
-        default:
-            return STS_ERR_INVALID_PARAM;
-    }
 }
 
 sts_result_t STS_SetTorqueLimit(sts_servo_t *servo, uint16_t limit) {
